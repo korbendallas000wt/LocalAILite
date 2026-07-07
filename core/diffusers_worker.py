@@ -1,0 +1,237 @@
+from PyQt6.QtCore import QObject, QProcess, pyqtSignal
+import json
+import os
+from datetime import datetime
+
+
+class DiffusersWorker(QObject):
+    step_updated = pyqtSignal(int, int, str)      # step, total, image_path
+    generation_finished = pyqtSignal(str, int)    # final_path, seed
+    error_occurred = pyqtSignal(str)
+    status_message = pyqtSignal(str)              # статусное сообщение для UI
+    log_line = pyqtSignal(str)                    # каждая строка вывода
+
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.process = None
+        self._stopped_by_user = False
+        self._log_file = None
+        self._log_path = None
+
+    def start(self, prompt, negative_prompt, params, resume=False, checkpoint_file=None):
+        """Запускает процесс генерации"""
+        self._stopped_by_user = False
+
+        # === Открываем файл лога ===
+        # ИСПРАВЛЕНО: логи теперь в data/logs/, а не в output_dir/logs/
+        from utils.config import Config
+        config = Config()
+        log_dir = config.get_logs_dir()
+        os.makedirs(log_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._log_path = os.path.join(log_dir, f"diffusers_{timestamp}.log")
+        try:
+            self._log_file = open(self._log_path, "w", encoding="utf-8")
+            self._log_file.write(f"=== Diffusers Generation Log ===\n")
+            self._log_file.write(f"Prompt: {prompt}\n")
+            self._log_file.write(f"Negative: {negative_prompt}\n")
+            self._log_file.write(f"Model: {params.get('model', '')}\n")
+            self._log_file.write(f"Scheduler: {params.get('scheduler', '')}\n")
+            self._log_file.write(f"Steps: {params.get('steps', 0)}\n")
+            self._log_file.write(f"CFG: {params.get('cfg', 0)}\n")
+            self._log_file.write(f"Size: {params.get('width', 0)}x{params.get('height', 0)}\n")
+            self._log_file.write(f"Seed: {params.get('seed', -1)}\n")
+            self._log_file.write(f"Device: {self.config.get('sdxl/device', 'cuda')}\n")
+            self._log_file.write(f"Resume: {resume}\n")
+            self._log_file.write(f"Checkpoint file: {checkpoint_file}\n")
+            self._log_file.write(f"Preview every: {params.get('preview_every', 0)}\n")
+            self._log_file.write(f"Preview start: {params.get('preview_start', 1)}\n")
+            self._log_file.write(f"Output dir: {self.config.get_sdxl_output_dir()}\n")
+            self._log_file.write("=" * 40 + "\n\n")
+            self._log_file.flush()
+        except Exception as e:
+            print(f"[DiffusersWorker] Не удалось открыть файл лога: {e}")
+            self._log_file = None
+
+        venv_path = self.config.get_sdxl_venv_path()
+        if not venv_path:
+            self.error_occurred.emit("Не указан путь к venv для Diffusers")
+            self._close_log_file()
+            return
+
+        python_path = os.path.join(venv_path, "bin", "python")
+        script_path = os.path.join(os.path.dirname(__file__), "..", "scripts", "generate_diffusers.py")
+        script_path = os.path.abspath(script_path)
+
+        if not os.path.exists(script_path):
+            self.error_occurred.emit(f"Скрипт не найден: {script_path}")
+            self._close_log_file()
+            return
+
+        # Определяем полный путь к модели
+        model_name = params["model"]
+        models_path = self.config.get_sdxl_models_path()
+
+        safetensors_path = os.path.join(models_path, f"{model_name}.safetensors")
+        ckpt_path = os.path.join(models_path, f"{model_name}.ckpt")
+
+        if os.path.isfile(safetensors_path):
+            model_path = safetensors_path
+        elif os.path.isfile(ckpt_path):
+            model_path = ckpt_path
+        else:
+            model_path = model_name
+
+        args = [
+            script_path,
+            "--prompt", prompt,
+            "--negative", negative_prompt,
+            "--model", model_path,
+            "--scheduler", params["scheduler"],
+            "--steps", str(params["steps"]),
+            "--cfg", str(params["cfg"]),
+            "--width", str(params["width"]),
+            "--height", str(params["height"]),
+            "--seed", str(params["seed"]),
+            "--device", self.config.get("sdxl/device", "cuda"),
+            "--preview-every", str(params.get("preview_every", 0)),
+            "--preview-start", str(params.get("preview_start", 1)),
+            "--output_dir", self.config.get_sdxl_output_dir(),
+            "--preview-dir", self.config.get_previews_dir(),
+            "--cache_dir", models_path
+        ]
+
+        if self.config.get("sdxl/no_safety_checker", "false") == "true":
+            args.append("--no-safety-checker")
+
+        if resume:
+            args.append("--resume")
+            if checkpoint_file:
+                args.extend(["--checkpoint-file", checkpoint_file])
+
+        self.process = QProcess()
+        self.process.setProgram(python_path)
+        self.process.setArguments(args)
+        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.process.readyReadStandardOutput.connect(self._on_output)
+        self.process.finished.connect(self._on_finished)
+        self.process.errorOccurred.connect(self._on_process_error)
+        self.process.start()
+
+    def stop(self):
+        """Останавливает процесс (ручная остановка пользователем)"""
+        self._stopped_by_user = True
+        if self.process and self.process.state() == QProcess.ProcessState.Running:
+            self.process.terminate()
+            if not self.process.waitForFinished(3000):
+                self.process.kill()
+
+        self._close_log_file()
+        self.generation_finished.emit("", -1)
+
+    def _close_log_file(self):
+        """Закрывает файл лога"""
+        if self._log_file:
+            try:
+                self._log_file.write("\n=== Generation finished ===\n")
+                self._log_file.write(f"Log saved to: {self._log_path}\n")
+                self._log_file.close()
+            except Exception:
+                pass
+            self._log_file = None
+
+    def _on_output(self):
+        """Обрабатывает ВСЕ строки вывода процесса"""
+        data = self.process.readAllStandardOutput().data().decode('utf-8', errors='ignore')
+        for line in data.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+
+            # 1. Пишем в файл лога
+            if self._log_file:
+                try:
+                    self._log_file.write(line + '\n')
+                    self._log_file.flush()
+                except Exception:
+                    pass
+
+            # 2. Эмитим сигнал для бегущей строки в UI
+            self.log_line.emit(line)
+
+            # 3. Пытаемся распарсить JSON (для UI)
+            try:
+                msg = json.loads(line)
+                msg_type = msg.get("type")
+
+                if msg_type == "step":
+                    step = msg.get("step", 0)
+                    total = msg.get("total_steps", 0)
+                    image_path = msg.get("image_path", "")
+                    self.step_updated.emit(step, total, image_path)
+
+                elif msg_type == "done":
+                    final_path = msg.get("final_path", "")
+                    seed = msg.get("seed", -1)
+                    self.generation_finished.emit(final_path, seed)
+
+                elif msg_type == "error":
+                    error_msg = msg.get("message", "Неизвестная ошибка")
+                    self.error_occurred.emit(error_msg)
+
+                elif msg_type == "status":
+                    status_msg = msg.get("message", "")
+                    self.status_message.emit(status_msg)
+
+                elif msg_type == "warning":
+                    warning_msg = msg.get("message", "")
+                    self.status_message.emit(f"⚠ {warning_msg}")
+
+            except json.JSONDecodeError:
+                pass
+
+    def _on_finished(self, exit_code, exit_status):
+        """Процесс завершён"""
+        self._close_log_file()
+
+        if self._stopped_by_user:
+            return
+
+        # Дочитываем оставшийся вывод
+        remaining = self.process.readAllStandardOutput().data().decode('utf-8', errors='ignore')
+        if remaining.strip():
+            for line in remaining.split('\n'):
+                if line.strip():
+                    self.log_line.emit(line.strip())
+
+                    try:
+                        msg = json.loads(line.strip())
+                        msg_type = msg.get("type")
+
+                        if msg_type == "done":
+                            self.generation_finished.emit(
+                                msg.get("final_path", ""),
+                                msg.get("seed", -1)
+                            )
+                        elif msg_type == "error":
+                            self.error_occurred.emit(msg.get("message", "Неизвестная ошибка"))
+                        elif msg_type == "status":
+                            self.status_message.emit(msg.get("message", ""))
+
+                    except json.JSONDecodeError:
+                        pass
+
+        # Игнорируем код 15 (SIGTERM — нормальная остановка)
+        if exit_code != 0 and exit_code != 15:
+            self.error_occurred.emit(f"Процесс завершился с кодом {exit_code}")
+
+    def _on_process_error(self, error):
+        """Ошибка запуска процесса"""
+        if self._stopped_by_user:
+            return
+
+        if error == QProcess.ProcessError.Crashed:
+            return
+
+        self.error_occurred.emit(f"Ошибка запуска: {error}")
