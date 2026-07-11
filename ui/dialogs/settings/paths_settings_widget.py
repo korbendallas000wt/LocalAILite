@@ -1,15 +1,22 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                               QLabel, QLineEdit, QPushButton, QFileDialog)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from core.path_validator import PathValidator
 
 class PathsSettingsWidget(QWidget):
     """Виджет общих настроек путей"""
+    
+    # Сигнал о готовности (все поля зелёные)
+    all_valid = pyqtSignal()
 
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.validator = PathValidator()
+        self._ollama_retry_count = 0
+        self._ollama_max_retries = 5
+        self._ollama_retry_timer = QTimer()
+        self._ollama_retry_timer.timeout.connect(self._on_ollama_retry)
         layout = QVBoxLayout(self)
 
         # Diffusers
@@ -98,7 +105,7 @@ class PathsSettingsWidget(QWidget):
         self.ollama_refresh = QPushButton("🔄")
         self.ollama_refresh.setFixedWidth(40)
         self.ollama_refresh.setToolTip("Перепроверить связь с Ollama")
-        self.ollama_refresh.clicked.connect(lambda: self._on_path_changed("ollama"))
+        self.ollama_refresh.clicked.connect(self._start_ollama_retries)
         ollama_url_layout.addWidget(self.ollama_refresh)
         self.ollama_status = QLabel("")
         ollama_url_layout.addWidget(self.ollama_status)
@@ -114,8 +121,49 @@ class PathsSettingsWidget(QWidget):
 
         layout.addStretch()
 
-        # Первоначальная валидация
-        self._on_validate_all()
+        # Первоначальная валидация (кроме Ollama — его проверим с retry)
+        self._on_path_changed("venv")
+        self._on_path_changed("models")
+        self._on_path_changed("output")
+        
+        # Запускаем авто-попытки подключения Ollama
+        self._start_ollama_retries()
+
+    def _start_ollama_retries(self):
+        """Запускает 5 попыток подключения к Ollama с интервалом 1 сек"""
+        self._ollama_retry_count = 0
+        self.ollama_status.setText("⏳")
+        self.ollama_status.setStyleSheet("color: orange;")
+        self.ollama_error.setText("Подключение...")
+        self.ollama_error.setStyleSheet("color: #DAA520; font-size: 11px;")  # Жёлтый
+        self.ollama_error.show()
+        self._on_ollama_retry()
+
+    def _on_ollama_retry(self):
+        """Одна попытка подключения к Ollama"""
+        self._ollama_retry_count += 1
+        
+        # Проверяем подключение
+        result = self.validator.validate_ollama_url(self.ollama_edit.text())
+        
+        if result["valid"]:
+            # Успех
+            self._ollama_retry_timer.stop()
+            self._update_status(self.ollama_status, self.ollama_error, result)
+            self.ollama_error.setText("Подключено")
+            self.ollama_error.setStyleSheet("color: green; font-size: 11px;")
+            self.ollama_error.show()
+            self._check_all_valid()
+        elif self._ollama_retry_count < self._ollama_max_retries:
+            # Ещё есть попытки
+            self.ollama_error.setText(f"Подключение... (попытка {self._ollama_retry_count}/{self._ollama_max_retries})")
+            self.ollama_error.setStyleSheet("color: #DAA520; font-size: 11px;")
+            self.ollama_error.show()
+            self._ollama_retry_timer.start(1000)  # 1 секунда
+        else:
+            # Все попытки исчерпаны
+            self._ollama_retry_timer.stop()
+            self._update_status(self.ollama_status, self.ollama_error, result)
 
     def load_settings(self):
         """Загружает настройки из конфига в UI"""
@@ -123,7 +171,10 @@ class PathsSettingsWidget(QWidget):
         self.models_edit.setText(self.config.get_sdxl_models_path())
         self.output_edit.setText(self.config.get_sdxl_output_dir())
         self.ollama_edit.setText(self.config.get_ollama_url())
-        self._on_validate_all()
+        self._on_path_changed("venv")
+        self._on_path_changed("models")
+        self._on_path_changed("output")
+        self._start_ollama_retries()
 
     def save_settings(self):
         """Сохраняет настройки из UI в конфиг"""
@@ -144,37 +195,33 @@ class PathsSettingsWidget(QWidget):
             result = self.validator.validate_output_dir(self.output_edit.text())
             self._update_status(self.output_status, self.output_error, result)
         elif field_name == "ollama":
-            result = self.validator.validate_ollama_url(self.ollama_edit.text())
-            self._update_status(self.ollama_status, self.ollama_error, result)
-        # Пробрасываем статус в главное окно
-        try:
-            p = self.parent()
-            while p and not hasattr(p, 'shared_bar'):
-                p = p.parent()
-            if p and hasattr(p, 'shared_bar'):
-                p.shared_bar.set_status(
-                    "✅ Ollama подключён" if result["valid"] else "❌ Не удалось подключиться",
-                    "green" if result["valid"] else "red"
-                )
-        except Exception:
-            pass
+            # Ручное изменение URL — запускаем retry
+            self._start_ollama_retries()
+        
+        self._check_all_valid()
+
+    def _check_all_valid(self):
+        """Проверяет, все ли поля валидны, и эмитит сигнал"""
+        venv_valid = self.validator.validate_venv(self.venv_edit.text())["valid"]
+        models_valid = self.validator.validate_models_path(self.models_edit.text())["valid"]
+        output_valid = self.validator.validate_output_dir(self.output_edit.text())["valid"]
+        ollama_valid = self.validator.validate_ollama_url(self.ollama_edit.text())["valid"]
+        
+        if venv_valid and models_valid and output_valid and ollama_valid:
+            self.all_valid.emit()
 
     def _update_status(self, status_label, error_label, result):
         """Обновляет индикатор статуса"""
         if result["valid"]:
             status_label.setText("✅")
+            status_label.setStyleSheet("color: green;")
             error_label.hide()
         else:
             status_label.setText("❌")
+            status_label.setStyleSheet("color: red;")
             error_label.setText(result.get("error", ""))
+            error_label.setStyleSheet("color: red; font-size: 11px;")
             error_label.show()
-
-    def _on_validate_all(self):
-        """Проверка всех путей"""
-        self._on_path_changed("venv")
-        self._on_path_changed("models")
-        self._on_path_changed("output")
-        self._on_path_changed("ollama")
 
     def _browse_folder(self, line_edit):
         """Открытие диалога выбора папки"""

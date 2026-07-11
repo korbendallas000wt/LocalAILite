@@ -3,6 +3,32 @@
 
 Формат: [Keep a Changelog](https://keepachangelog.com/) | Версионирование: [SemVer](https://semver.org/)
 
+## [1.1.0] — 2026-07-11
+
+### Добавлено
+- **core/vae_manager.py v1.1.0**: Менеджер VAE Decoder как отдельный арендатор ресурсов. QProcess-обёртка для vae_decoder_daemon.py, интеграция с ResourceManager (acquire/release), применение CPU affinity и nice-приоритета.
+- **scripts/vae_decoder_daemon.py v1.1.0**: Daemon для декодирования latents в PNG. Поддержка параметра --single_file для декодирования конкретного шага по запросу UI. Watchdog-режим: отслеживает появление новых .pt файлов в history_dir.
+
+### Изменено
+- **core/diffusers_worker.py**: Интеграция ResourceMonitor — проверка RAM перед запуском, применение лимитов CPU (OMP_NUM_THREADS, cpu_affinity, nice-приоритет). Адаптация под diffusers 0.39+ (callback_on_step_end вместо устаревшего callback). Упрощение сохранения чекпоинтов: синхронная запись вместо daemon-потоков (~0.1 сек на фоне 500 сек шага).
+- **core/ollama_manager.py**: Интеграция ResourceMonitor — проверка RAM перед запуском, применение CPU affinity и nice-приоритета.
+- **core/resource_manager.py**: Теперь управляет тремя арендаторами: Ollama, Diffusers, VAE Decoder.
+- **scripts/generate_diffusers.py**: Адаптация под diffusers 0.39+ (callback_on_step_end). Синхронное сохранение чекпоинтов на каждом шаге.
+- **ui/shared_bottom_bar.py**: Исправлен таймер — запускается один раз при старте, не сбрасывается на каждом шаге.
+- **ui/main_window.py**: Восстановлен CleanupDialog в closeEvent. Убран мёртвый код из _on_resource_released.
+
+### Исправлено
+- **Resume из архивных чекпоинтов**: Генерация больше не зависает на одной картинке. Корректно передаются latents, timesteps и num_inference_steps=remaining_steps в diffusers 0.39+.
+- **Таймер SharedBottomBar**: Больше не сбрасывается на каждом шаге генерации.
+- **CleanupDialog**: Корректно вызывается в closeEvent. Убран NameError из _on_resource_released.
+- **Отображение дат в UI**: Исправлен формат (2026.07.05 14:30:45 вместо кривого).
+- **Скрытые падения**: Устранены NameError, NoneType.pop в различных сценариях.
+
+### Архитектура
+- **VAE Decoder вынесен в отдельный процесс**: Попытки делать VAE decode в daemon-потоке внутри процесса генерации провалились из-за GIL и конфликта CPU affinity. VAEManager — полноценный арендатор ресурсов (как Ollama/Diffusers).
+- **Синхронные чекпоинты**: Убран оверхед с daemon-потоками. Операция занимает ~0.1 сек на фоне 500 сек шага.
+- **Контроль ресурсов**: Приложение жёстко ограничено настройками пользователя (RAM/CPU), не мешает системе.
+
 ## [1.0.0] — 2026-07-07
 
 ### Добавлено

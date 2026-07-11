@@ -2,12 +2,14 @@ from PyQt6.QtWidgets import QMainWindow, QTabWidget, QVBoxLayout, QWidget, QMenu
 from PyQt6.QtGui import QAction
 from ui.tabs.ollama_tab import OllamaTab
 from ui.tabs.diffusers_tab import DiffusersTab
+from ui.tabs.image_prep_tab import ImagePrepTab
 from ui.shared_bottom_bar import SharedBottomBar
 from ui.dialogs.settings.settings_dialog import SettingsDialog
 from utils.config import Config
 from core.resource_manager import ResourceManager
 from core.path_validator import PathValidator
 from core.ollama_manager import OllamaManager
+from core.vae_manager import VAEManager
 
 
 class MainWindow(QMainWindow):
@@ -18,6 +20,8 @@ class MainWindow(QMainWindow):
 
         self.config = Config()
         self.resource_manager = ResourceManager()
+        self.resource_manager.resource_acquired.connect(self._on_resource_acquired)
+        self.resource_manager.resource_released.connect(self._on_resource_released)
 
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
@@ -25,19 +29,27 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs, 1)
 
-        self.ollama_tab = OllamaTab(self.config)
+        self.ollama_tab = OllamaTab(self.config, self.resource_manager)
         self.tabs.addTab(self.ollama_tab, "💬 Ollama Chat")
 
-        self.diffusers_tab = DiffusersTab(self.config)
+        self.diffusers_tab = DiffusersTab(self.config, self.resource_manager)
         self.tabs.addTab(self.diffusers_tab, "🎨 Diffusers")
+
+        self.image_prep_tab = ImagePrepTab(self.config, self.resource_manager)
+        self.tabs.addTab(self.image_prep_tab, "Visual editor")
 
         self.shared_bar = SharedBottomBar()
         main_layout.addWidget(self.shared_bar)
+        
+        # Синхронизация радиокнопок с табами
+        self.shared_bar.ollama_radio.toggled.connect(self._on_radio_toggled)
+        self.shared_bar.diffusers_radio.toggled.connect(self._on_radio_toggled)
 
         self.setCentralWidget(central_widget)
 
         self.resource_manager.register_module("ollama", self.ollama_tab)
         self.resource_manager.register_module("diffusers", self.diffusers_tab)
+        self.resource_manager.register_module("image_prep", self.image_prep_tab)
 
         # === Ollama Manager ===
         self.ollama_manager = OllamaManager(self.config)
@@ -60,6 +72,7 @@ class MainWindow(QMainWindow):
         # Универсальные сигналы состояния от табов
         self.ollama_tab.state_changed.connect(self._on_tab_state_changed)
         self.diffusers_tab.state_changed.connect(self._on_tab_state_changed)
+        self.image_prep_tab.state_changed.connect(self._on_tab_state_changed)
 
         self._create_menu()
         self._restore_bar_state()
@@ -69,7 +82,6 @@ class MainWindow(QMainWindow):
         if hasattr(first_tab, '_bar_state'):
             state = first_tab._bar_state
             self.shared_bar.set_prompt(state["prompt"])
-            self.shared_bar.set_end_label(state["end_label"])
             self.shared_bar.set_status(state["status"])
 
         self._update_status()
@@ -117,13 +129,7 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index):
         """Переключение табов"""
         active_tab = self.tabs.currentWidget()
-        if hasattr(active_tab, '_bar_state') and active_tab._bar_state["is_running"]:
-            self.shared_bar.set_status("⚠ Идёт генерация, дождитесь завершения", "red")
-            self.tabs.blockSignals(True)
-            self.tabs.setCurrentIndex(self._prev_index)
-            self.tabs.blockSignals(False)
-            return
-
+        # Переключение табов свободно, блокировка только на кнопке запуска
         prev_tab = self.tabs.widget(self._prev_index)
         if hasattr(prev_tab, '_bar_state'):
             prev_tab._bar_state["prompt"] = self.shared_bar.get_prompt()
@@ -134,7 +140,6 @@ class MainWindow(QMainWindow):
         if hasattr(active_tab, '_bar_state'):
             state = active_tab._bar_state
             self.shared_bar.set_prompt(state["prompt"])
-            self.shared_bar.set_end_label(state["end_label"])
             self.shared_bar.set_progress(state["progress_current"], state["progress_total"])
             self.shared_bar.set_status(state["status"])
             if state["is_running"]:
@@ -162,9 +167,6 @@ class MainWindow(QMainWindow):
             self.shared_bar.set_progress(state["progress_current"], state["progress_total"])
         if "status" in state:
             self.shared_bar.set_status(state["status"])
-        if "end_label" in state:
-            self.shared_bar.set_end_label(state["end_label"])
-
         if state.get("is_running"):
             self.shared_bar.start_timer()
             self.shared_bar.set_running_state(True)
@@ -179,8 +181,9 @@ class MainWindow(QMainWindow):
     def on_prompt_submitted(self, prompt):
         """Отправляет промпт в активный модуль"""
         active_tab = self.tabs.currentWidget()
-        if hasattr(active_tab, '_bar_state') and active_tab._bar_state["is_running"]:
-            self.shared_bar.set_status("⚠ Дождитесь завершения текущей генерации", "red")
+        if self.resource_manager.is_resource_busy():
+            owner = self.resource_manager.get_resource_owner()
+            self.shared_bar.set_status(f"⚠ Ресурс занят: {owner}", "red")
             return
 
         if hasattr(active_tab, 'handle_prompt'):
@@ -278,6 +281,65 @@ class MainWindow(QMainWindow):
         # TODO: Реализовать скачивание через QThread + прогрессбар
         self.shared_bar.set_status("⚠ Скачивание Ollama пока не реализовано", "orange")
 
+    
+    def _sync_radio_with_tab(self, index):
+        """Синхронизирует радиокнопки с активным табом"""
+        # Блокируем сигналы, чтобы не было рекурсии
+        self.shared_bar.ollama_radio.blockSignals(True)
+        self.shared_bar.diffusers_radio.blockSignals(True)
+        
+        if index == 0:  # Ollama
+            self.shared_bar.ollama_radio.setChecked(True)
+        elif index == 1:  # Diffusers
+            self.shared_bar.diffusers_radio.setChecked(True)
+        elif index == 2:  # Visual Editor (считаем как Diffusers)
+            self.shared_bar.diffusers_radio.setChecked(True)
+        
+        self.shared_bar.ollama_radio.blockSignals(False)
+        self.shared_bar.diffusers_radio.blockSignals(False)
+    
+    def _on_radio_toggled(self, checked):
+        """Обработка клика по радиокнопке — переключает таб"""
+        if not checked:
+            return
+        
+        sender = self.sender()
+        if sender == self.shared_bar.ollama_radio:
+            target_index = 0
+        elif sender == self.shared_bar.diffusers_radio:
+            target_index = 1
+        else:
+            return
+        
+        # Переключаем таб (если не текущий)
+        if self.tabs.currentIndex() != target_index:
+            self.tabs.setCurrentIndex(target_index)
+
+    # === VAE Manager handlers ===
+    def _on_vae_started(self):
+        """VAE decoder запущен"""
+        self.shared_bar.set_status("VAE: декодирование...", "blue")
+
+    def _on_vae_finished(self):
+        """VAE decoder завершён"""
+        self.shared_bar.set_status("Готово")
+
+    def _on_vae_error(self, error_msg):
+        """Ошибка VAE decoder"""
+        self.shared_bar.set_status(f"⚠ VAE: {error_msg}", "red")
+
+    def _on_vae_log(self, line):
+        """Строка лога VAE decoder"""
+        if any(kw in line.lower() for kw in ["error", "saved", "started"]):
+            self.shared_bar.set_status(f"VAE: {line[:80]}", "gray")
+
+    def _on_vae_decode_completed(self, png_path):
+        """Декодирование завершено — PNG сохранён"""
+        self.shared_bar.set_status(f"✅ PNG сохранён: {os.path.basename(png_path)}", "green")
+        # Обновляем превью в DiffusersTab
+        if hasattr(self.diffusers_tab, '_update_preview'):
+            self.diffusers_tab._update_preview(png_path)
+
     def closeEvent(self, event):
         """Показывает диалог очистки при закрытии"""
         # Сохраняем состояние
@@ -285,6 +347,35 @@ class MainWindow(QMainWindow):
         if hasattr(active_tab, '_bar_state'):
             active_tab._bar_state["prompt"] = self.shared_bar.get_prompt()
         self._save_bar_state()
+
+        # Показываем диалог очистки
+        from ui.cleanup_dialog import CleanupDialog
+        cleanup_dialog = CleanupDialog(
+            self.ollama_tab,
+            self.diffusers_tab,
+            self.config,
+            self.ollama_manager,
+            self
+        )
+
+        # Блокируем закрытие до завершения очистки
+        event.ignore()
+
+        # После закрытия диалога — выходим
+        if cleanup_dialog.exec():
+            from PyQt6.QtWidgets import QApplication
+            QApplication.quit()
+    
+    def _on_resource_acquired(self, module_name):
+        """Ресурс захвачен модулем"""
+        self.shared_bar.set_resource_state(True, module_name)
+        self.shared_bar.set_status(f"⚠ {module_name}: генерация...", "orange")
+    
+    def _on_resource_released(self):
+        """Ресурс освобождён"""
+        self.shared_bar.set_resource_state(False)
+        self.shared_bar.set_status("Готово")
+
 
         # Отменяем закрытие и скрываем окно
         event.ignore()

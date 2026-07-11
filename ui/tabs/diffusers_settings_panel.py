@@ -15,7 +15,6 @@ class DiffusersSettingsPanel(QWidget):
         self.config = config
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
 
         # === Чекпоинты (в самом верху) ===
         checkpoint_row = QHBoxLayout()
@@ -98,23 +97,7 @@ class DiffusersSettingsPanel(QWidget):
 
         form.addRow("Seed:", seed_layout)
 
-        # Preview Every
-        self.preview_every_spin = QSpinBox()
-        self.preview_every_spin.setRange(0, 100)
-        self.preview_every_spin.setValue(int(self.config.get("sdxl/preview_every", 0)))
-        self.preview_every_spin.setToolTip(
-            "Сохранять превью каждые N шагов (0 = выключено, 1 = каждый шаг)"
-        )
-        form.addRow("Превью каждые N шагов:", self.preview_every_spin)
 
-        # Preview Start
-        self.preview_start_spin = QSpinBox()
-        self.preview_start_spin.setRange(1, 150)
-        self.preview_start_spin.setValue(int(self.config.get("sdxl/preview_start", 1)))
-        self.preview_start_spin.setToolTip(
-            "Начинать сохранение превью с этого шага (ранние шаги = шум)"
-        )
-        form.addRow("Начальный шаг превью:", self.preview_start_spin)
 
         layout.addLayout(form)
 
@@ -198,9 +181,6 @@ class DiffusersSettingsPanel(QWidget):
         if negative:
             self.negative_prompt.setPlainText(negative)
 
-    def get_end_label(self) -> str:
-        """Возвращает текст для end_label (например, '30 шагов')"""
-        return f"{self.steps_spin.value()} шагов"
 
     def _load_models(self):
         """Загружает список моделей из папки"""
@@ -247,8 +227,7 @@ class DiffusersSettingsPanel(QWidget):
         self.config.set_sdxl_scheduler(self.scheduler_combo.currentText())
         self.config.set("sdxl/steps", self.steps_spin.value())
         self.config.set("sdxl/cfg", self.cfg_spin.value())
-        self.config.set("sdxl/preview_every", self.preview_every_spin.value())
-        self.config.set("sdxl/preview_start", self.preview_start_spin.value())
+
 
     def get_params(self):
         """Возвращает параметры генерации"""
@@ -263,8 +242,7 @@ class DiffusersSettingsPanel(QWidget):
             "width": width,
             "height": height,
             "seed": int(self.seed_edit.text()) if self.seed_edit.text().isdigit() else -1,
-            "preview_every": self.preview_every_spin.value(),
-            "preview_start": self.preview_start_spin.value()
+
         }
 
         return params

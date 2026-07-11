@@ -90,6 +90,11 @@ class Config:
         import os
         return os.path.join(self.get_data_dir(), "previews")
 
+    def get_history_dir(self):
+        """Папка для истории генерации (PNG на каждом шаге)"""
+        import os
+        return os.path.join(self.get_data_dir(), "history")
+
     def get_logs_dir(self):
         """Папка для логов (технические файлы)"""
         import os
@@ -110,3 +115,9 @@ class Config:
         """Папка с библиотеками Ollama (CUDA, ROCm)"""
         import os
         return os.path.join(self.get_data_dir(), "..", "bin", "ollama", "lib", "ollama")
+
+    # === Image Prep ===
+    def get_init_images_dir(self):
+        """Папка для подготовленных изображений"""
+        import os
+        return os.path.join(self.get_data_dir(), "init_images")

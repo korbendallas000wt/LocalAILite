@@ -5,6 +5,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from ui.tabs.diffusers_settings_panel import DiffusersSettingsPanel
 from core.diffusers_worker import DiffusersWorker
+from core import history_manager
 from core.checkpoint_manager import (
     archive_checkpoint, checkpoint_exists, delete_checkpoint, load_archived_metadata
 )
@@ -25,9 +26,10 @@ class DiffusersTab(QWidget):
     # Универсальный сигнал для MainWindow
     state_changed = pyqtSignal(dict)
     
-    def __init__(self, config):
+    def __init__(self, config, resource_manager):
         super().__init__()
         self.config = config
+        self.resource_manager = resource_manager
         self.worker = None
         self._resume_from_archive = False
         self._archive_checkpoint_file = None
@@ -41,7 +43,6 @@ class DiffusersTab(QWidget):
             "progress_current": 0,
             "progress_total": 0,
             "status": "Готово",
-            "end_label": "30 шагов",
             "is_running": False
         }
         
@@ -50,9 +51,9 @@ class DiffusersTab(QWidget):
         # Левая часть: превью изображения
         left_layout = QVBoxLayout()
         self.image_view = QGraphicsView()
-        self.image_view.setRenderHint(self.image_view.renderHints())
         self.scene = QGraphicsScene()
         self.image_view.setScene(self.scene)
+        self.image_view.viewport().setContentsMargins(10, 10, 10, 10)
         self.image_view.setBackgroundBrush(Qt.GlobalColor.darkGray)
         left_layout.addWidget(self.image_view, 1)
         
@@ -70,11 +71,8 @@ class DiffusersTab(QWidget):
         self.settings_panel.load_checkpoint_btn.clicked.connect(self._on_load_checkpoint)
         self.settings_panel.load_checkpoints_list()
         
-        self._bar_state["end_label"] = self.settings_panel.get_end_label()
     
     def _on_steps_changed(self, value):
-        """Обновляет end_label при изменении steps"""
-        self._bar_state["end_label"] = self.settings_panel.get_end_label()
         self.state_changed.emit(self._bar_state.copy())
     
     def _on_load_checkpoint(self):
@@ -102,7 +100,6 @@ class DiffusersTab(QWidget):
         self._bar_state["prompt"] = json_data.get("prompt", "")
         self._bar_state["progress_current"] = current_step
         self._bar_state["progress_total"] = total_steps
-        self._bar_state["end_label"] = f"{current_step}/{total_steps} шагов"
         self._bar_state["status"] = (
             f"💾 Чекпоинт загружен. Нажмите Запустить для продолжения "
             f"с шага {current_step}/{total_steps}"
@@ -145,6 +142,10 @@ class DiffusersTab(QWidget):
         self._status_buffer = ""
         
         self.update_bar_state("prompt", prompt)
+        if not self.resource_manager.acquire_resource("diffusers"):
+            self.update_bar_state("status", "⚠ Ресурс занят другой моделью", "red")
+            self.update_bar_state("is_running", False)
+            return
         self.update_bar_state("is_running", True)
         self.update_bar_state("status", "Загрузка модели...")
         self.update_bar_state("progress_total", params["steps"])
@@ -250,7 +251,6 @@ class DiffusersTab(QWidget):
         
         self.update_bar_state("progress_current", step)
         self.update_bar_state("progress_total", total)
-        self.update_bar_state("end_label", f"{step}/{total} шагов")
         
         self.step_updated.emit(step, total, image_path)
     
@@ -285,7 +285,6 @@ class DiffusersTab(QWidget):
         self.update_bar_state("is_running", False)
         self.update_bar_state("status", "Готово")
         self.update_bar_state("progress_current", 0)
-        self.update_bar_state("end_label", self.settings_panel.get_end_label())
         
         self.generation_finished.emit()
     

@@ -183,7 +183,7 @@ def list_archived_checkpoints():
         if filename.endswith('.json') and filename != 'checkpoint.json':
             timestamp = filename[:-5]  # убираем .json
             # Формат: 2026-07-05_14-30-45 → 2026-07-05 14:30:45
-            display_name = timestamp.replace('_', ' ').replace('-', ':', 2)
+            display_name = f"{timestamp[:10].replace('-', '.')} {timestamp[11:19].replace('-', ':')}"
             checkpoints.append({
                 "timestamp": timestamp,
                 "filename": filename,

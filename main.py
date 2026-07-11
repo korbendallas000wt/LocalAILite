@@ -1,7 +1,6 @@
 import sys
 from PyQt6.QtWidgets import QApplication, QStyleFactory, QMessageBox
 from ui.main_window import MainWindow
-from ui.dialogs.paths_dialog import PathsDialog
 from ui.dialogs.settings.settings_dialog import SettingsDialog
 from utils.config import Config
 from core.path_validator import PathValidator
@@ -29,13 +28,14 @@ if __name__ == "__main__":
     if not result["all_valid"]:
         dialog = SettingsDialog(config, window)
         dialog.tabs.setCurrentIndex(0)  # Открываем на вкладке "Общие"
+        
         if not dialog.exec():
+            # Cancel — показываем предупреждение
             QMessageBox.warning(
                 window,
                 "Настройка путей",
-                "Настройка путей отменена.\n"
-                "Некоторые функции будут недоступны.\n\n"
-                "Вы можете настроить пути позже через меню Настройки → Настройки..."
+                "Настройка путей не завершена.\n"
+                "Некоторые функции будут недоступны..."
             )
     
     window.show()

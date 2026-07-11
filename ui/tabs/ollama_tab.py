@@ -13,9 +13,10 @@ class OllamaTab(QWidget):
     # Универсальный сигнал для MainWindow
     state_changed = pyqtSignal(dict)
 
-    def __init__(self, config):
+    def __init__(self, config, resource_manager):
         super().__init__()
         self.config = config
+        self.resource_manager = resource_manager
         self.chat_manager = ChatManager()
         self.client = None
         self._current_response_text = ""
@@ -27,7 +28,6 @@ class OllamaTab(QWidget):
             "progress_current": 0,
             "progress_total": 0,
             "status": "Готово",
-            "end_label": "10 мин",
             "is_running": False
         }
 
@@ -41,19 +41,12 @@ class OllamaTab(QWidget):
 
         self.settings_panel.clear_btn.clicked.connect(self.clear_chat)
 
-        # Подключаем изменение timeout для обновления end_label
         self.settings_panel.timeout_spin.valueChanged.connect(self._on_timeout_changed)
 
-        # Инициализируем end_label
-        self._bar_state["end_label"] = self.get_end_label()
 
     def _on_timeout_changed(self, value):
-        """Обновляет end_label при изменении timeout"""
-        self._bar_state["end_label"] = self.get_end_label()
         self.state_changed.emit(self._bar_state.copy())
 
-    def get_end_label(self) -> str:
-        """Возвращает текст для end_label (например, '10 мин')"""
         timeout_minutes = self.settings_panel.timeout_spin.value() // 60
         return f"{timeout_minutes} мин"
 
@@ -78,6 +71,10 @@ class OllamaTab(QWidget):
 
         # Обновляем состояние
         self.update_bar_state("prompt", text)
+        if not self.resource_manager.acquire_resource("ollama"):
+            self.update_bar_state("status", "⚠ Ресурс занят другой моделью", "red")
+            self.update_bar_state("is_running", False)
+            return
         self.update_bar_state("is_running", True)
         self.update_bar_state("status", "Генерация...")
 
@@ -135,6 +132,7 @@ class OllamaTab(QWidget):
             self.chat_widget.finalize_response({})
 
         # Обновляем состояние
+        self.resource_manager.release_resource()
         self.update_bar_state("is_running", False)
         self.update_bar_state("status", "Готово")
 

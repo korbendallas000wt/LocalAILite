@@ -2,6 +2,7 @@ from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, pyqtSignal
 import os
 import socket
 import time
+from core.resource_monitor import ResourceMonitor
 
 
 class OllamaManager(QObject):
