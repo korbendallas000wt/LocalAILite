@@ -83,6 +83,7 @@ class ImagePrepTab(QWidget):
             "progress_current": 0,
             "progress_total": 0,
             "status": "Готово",
+            "status_color": "green",
             "is_running": False
         }
 
@@ -158,8 +159,10 @@ class ImagePrepTab(QWidget):
             self.processed_image = None
 
             # Обновляем статус
-            self.update_bar_state("status",
-                f"Загружено: {os.path.basename(file_path)} ({info['width']}×{info['height']}, {info['format']})")
+            self._set_status(
+                f"Загружено: {os.path.basename(file_path)} ({info['width']}×{info['height']}, {info['format']})",
+            "#DAA520"
+        )
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить изображение:\n{e}")
 
@@ -187,8 +190,10 @@ class ImagePrepTab(QWidget):
             self.config.set("image_prep/preset", self.settings_panel.preset_combo.currentIndex())
             self.config.set("image_prep/crop_mode", crop_mode)
 
-            self.update_bar_state("status",
-                f"Обработано: {self.processed_image.width}×{self.processed_image.height}")
+            self._set_status(
+                f"Обработано: {self.processed_image.width}×{self.processed_image.height}",
+            "#DAA520"
+        )
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось обработать изображение:\n{e}")
 
@@ -204,7 +209,7 @@ class ImagePrepTab(QWidget):
             saved_path = save_processed_image(
                 self.processed_image, output_dir, self.original_path
             )
-            self.update_bar_state("status", f"Сохранено: {os.path.basename(saved_path)}")
+            self._set_status(f"Сохранено: {os.path.basename(saved_path)}", "green")
             QMessageBox.information(self, "Готово", f"Изображение сохранено:\n{saved_path}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить:\n{e}")
@@ -235,6 +240,12 @@ class ImagePrepTab(QWidget):
         self._bar_state[key] = value
         self.state_changed.emit(self._bar_state.copy())
 
+
+    def _set_status(self, message: str, color: str = "#DAA520"):
+        """Устанавливает статус с цветом"""
+        self._bar_state["status"] = message
+        self._bar_state["status_color"] = color
+        self.state_changed.emit(self._bar_state.copy())
     def unload(self):
         """Выгрузка модуля (для ResourceManager)"""
         pass

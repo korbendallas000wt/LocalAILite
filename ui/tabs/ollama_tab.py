@@ -28,6 +28,7 @@ class OllamaTab(QWidget):
             "progress_current": 0,
             "progress_total": 0,
             "status": "Готово",
+            "status_color": "green",
             "is_running": False
         }
 
@@ -64,6 +65,12 @@ class OllamaTab(QWidget):
         self._bar_state[key] = value
         self.state_changed.emit(self._bar_state.copy())
 
+    def _set_status(self, message: str, color: str = "#DAA520"):
+        """Устанавливает статус с цветом"""
+        self._bar_state["status"] = message
+        self._bar_state["status_color"] = color
+        self.state_changed.emit(self._bar_state.copy())
+
     def handle_prompt(self, text):
         """Обработка промпта из общей панели"""
         if not text:
@@ -72,11 +79,11 @@ class OllamaTab(QWidget):
         # Обновляем состояние
         self.update_bar_state("prompt", text)
         if not self.resource_manager.acquire_resource("ollama"):
-            self.update_bar_state("status", "⚠ Ресурс занят другой моделью", "red")
+            self._set_status("⚠ Ресурс занят другой моделью", "orange")
             self.update_bar_state("is_running", False)
             return
         self.update_bar_state("is_running", True)
-        self.update_bar_state("status", "Генерация...")
+        self._set_status("Генерация...", "#DAA520")
 
         self.chat_manager.add_user_message(text)
         self.chat_widget.append_user_message(text)
@@ -119,7 +126,7 @@ class OllamaTab(QWidget):
         self.chat_widget.append_token(token)
 
         # Обновляем статус
-        self.update_bar_state("status", f"Генерация... ({len(self._current_response_text)} символов)")
+        self._set_status(f"Генерация... ({len(self._current_response_text)} символов)", "#DAA520")
 
     def on_finished(self):
         """Генерация завершена"""
@@ -134,7 +141,7 @@ class OllamaTab(QWidget):
         # Обновляем состояние
         self.resource_manager.release_resource()
         self.update_bar_state("is_running", False)
-        self.update_bar_state("status", "Готово")
+        self._set_status("Готово", "green")
 
     def on_stats(self, stats_dict):
         """Получена статистика"""
@@ -146,7 +153,7 @@ class OllamaTab(QWidget):
 
         # Обновляем состояние
         self.update_bar_state("is_running", False)
-        self.update_bar_state("status", f"Ошибка: {error_msg}")
+        self._set_status(f"Ошибка: {error_msg}", "red")
 
     def stop_generation(self):
         """Остановка генерации"""

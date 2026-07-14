@@ -198,7 +198,7 @@ class DiffusersWorker(QObject):
                 msg_type = msg.get("type")
                 if msg_type == "step":
                     step = msg.get("step", 0)
-                    total = msg.get("total_steps", 0)
+                    total = msg.get("total", 0)
                     image_path = msg.get("image_path", "")
                     self.step_updated.emit(step, total, image_path)
                 elif msg_type == "done":

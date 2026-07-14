@@ -29,11 +29,8 @@ class ResourceManager(QObject):
     def on_tab_changed(self, index):
         """Вызывается при переключении таба — выгружает неактивные модули"""
         module_names = list(self.modules.keys())
-        # VAE не имеет таба, поэтому пропускаем его при переключении
         if 0 <= index < len(module_names):
             module_name = module_names[index]
-            if module_name == "vae":
-                return  # VAE не переключается через табы
             if self.active_module and self.active_module != module_name:
                 # Выгружаем предыдущий модуль
                 prev_module = self.modules.get(self.active_module)

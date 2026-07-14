@@ -22,6 +22,6 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Backup files
-*.bak
-*.bak.*
+# Local LLM context files
+full_docs.py
+full_context.py

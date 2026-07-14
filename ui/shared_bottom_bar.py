@@ -89,16 +89,12 @@ class SharedBottomBar(QWidget):
         right_layout.addLayout(indicators_layout)
         
         # Кнопка запуска/остановки
-        self.run_btn = QPushButton("Запустить")
-        self.run_btn.setMinimumHeight(60)
-        self.run_btn.clicked.connect(self._on_run_clicked)
-        right_layout.addWidget(self.run_btn)
-        
-        self.stop_btn = QPushButton("Стоп")
-        self.stop_btn.setMinimumHeight(60)
-        self.stop_btn.setVisible(False)
-        self.stop_btn.clicked.connect(self._on_stop_clicked)
-        right_layout.addWidget(self.stop_btn)
+        # Единая кнопка с тремя состояниями: Генерация / Остановить / Завершение...
+        self.action_btn = QPushButton("▶ Генерация")
+        self.action_btn.setMinimumHeight(60)
+        self.action_btn.clicked.connect(self._on_action_clicked)
+        self._action_state = "ready"  # ready, running, stopping
+        right_layout.addWidget(self.action_btn)
         
         main_layout.addWidget(right_group, 1)
         
@@ -152,35 +148,55 @@ class SharedBottomBar(QWidget):
         """Устанавливает состояние генерации"""
         if running:
             self.start_timer()
+            self._action_state = "running"
+            self.action_btn.setText("⏹ Остановить")
+            self.action_btn.setEnabled(True)
+            self.prompt_edit.setEnabled(False)
         else:
             self.stop_timer()
-        self.run_btn.setVisible(not running)
-        self.stop_btn.setVisible(running)
-        self.prompt_edit.setEnabled(not running)
+            self._action_state = "ready"
+            self.action_btn.setText("▶ Генерация")
+            self.action_btn.setEnabled(True)
+            self.prompt_edit.setEnabled(True)
+
+    def set_stopping_state(self):
+        """Устанавливает состояние завершения (после остановки)"""
+        self._action_state = "stopping"
+        self.action_btn.setText("Завершение...")
+        self.action_btn.setEnabled(False)
     
     def set_resource_state(self, busy: bool, owner: str = None):
         """Устанавливает состояние ресурса"""
         if busy:
             self.resource_label.setText(f"🔴 {owner}")
             self.resource_label.setStyleSheet("font-size: 11px; color: red;")
-            self.run_btn.setEnabled(False)
+            # Не блокируем кнопку, если она в состоянии stopping
+            if self._action_state != "stopping":
+                self.action_btn.setEnabled(False)
         else:
             self.resource_label.setText("🟢 Свободно")
             self.resource_label.setStyleSheet("font-size: 11px; color: green;")
-            self.run_btn.setEnabled(True)
+            # Разблокируем только если не в состоянии stopping
+            if self._action_state != "stopping":
+                self.action_btn.setEnabled(True)
     
     # ─── Внутренние методы ───
     
     def _on_text_changed(self):
         self.prompt_changed.emit(self.prompt_edit.toPlainText())
     
-    def _on_run_clicked(self):
-        text = self.get_prompt()
-        if text:
-            self.prompt_submitted.emit(text)
-    
-    def _on_stop_clicked(self):
-        self.generation_stopped.emit()
+    def _on_action_clicked(self):
+        """Обработка клика по единой кнопке действия"""
+        if self._action_state == "ready":
+            # Запуск генерации
+            text = self.get_prompt()
+            if text:
+                self.prompt_submitted.emit(text)
+        elif self._action_state == "running":
+            # Остановка генерации
+            self.generation_stopped.emit()
+        # Состояние "stopping" — кнопка неактивна, клик игнорируется
+
     
     def _update_timer(self):
         """Обновляет отображение таймера"""
@@ -216,6 +232,6 @@ class SharedBottomBar(QWidget):
             key_event = event
             if key_event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 if not (key_event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
-                    self._on_run_clicked()
+                    self._on_action_clicked()
                     return True
         return super().eventFilter(obj, event)

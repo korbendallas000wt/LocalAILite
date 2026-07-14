@@ -1,13 +1,17 @@
-## LocalAILite — структура проекта
->Локальный AI-ассистент: чат с Ollama + генерация изображений (SDXL/Diffusers) + визуальный редактор.
->Платформа: Manjaro Linux, PyQt6, Python 3.14.
+LocalAILite — структура проекта
+Локальный AI-ассистент: чат с Ollama + генерация изображений (SDXL/Diffusers) + визуальный редактор.
+Платформа: Manjaro Linux, PyQt6, Python 3.14.
 
-## Файлы проекта
+Файлы проекта
 LocalAILite/
 ├── main.py                              # Точка входа: QApplication, валидация путей, запуск MainWindow
 ├── full_context.py                      # Склеенный контекст всех файлов (для LLM)
+├── full_docs.py                         # Склеенная документация (для LLM)
 ├── STRUCTURE.md                         # Этот файл
 ├── save_context.sh                      # Скрипт обновления full_context.py
+├── sync_repo.sh                         # Синхронизация рабочей папки -> Repo
+├── backup.sh                            # Полный бэкап в Backup/
+├── merge_docs.py                        # Скрипт склейки документации в full_docs.py
 │
 ├── core/                                # Ядро (логика без UI)
 │   ├── chat_manager.py                  # История чата (messages list)
@@ -20,24 +24,23 @@ LocalAILite/
 │   ├── ollama_manager.py                # Управление ollama serve (старт/стоп/конфликты портов)
 │   ├── path_validator.py                # Валидация venv, моделей, output, Ollama URL
 │   ├── resource_manager.py              # Переключение табов + управление ресурсом (GPU/RAM)
-│   ├── resource_monitor.py              # Мониторинг RAM/CPU, оценка потребления, лимиты
-│   └── vae_manager.py                   # VAE Decoder как отдельный арендатор ресурсов (QProcess)
+│   └── resource_monitor.py              # Мониторинг RAM/CPU, оценка потребления, лимиты
 │
 ├── scripts/                             # CLI-скрипты (запускаются в venv)
 │   ├── generate_diffusers.py            # Генерация SDXL: модель, loop, callback_on_step_end, чекпоинты
-│   ├── vae_decoder_daemon.py            # VAE Decoder: декодирование latents в PNG (watchdog + single_file)
 │   ├── encode_image.py                  # Кодирование изображения в latents через VAE (для img2img)
 │   └── test_vae_roundtrip.py            # Тест VAE encode/decode roundtrip
 │
 ├── ui/                                  # PyQt6 интерфейс
-│   ├── main_window.py                   # Главное окно: 3 вкладки, меню, OllamaManager, VAEManager, SharedBottomBar
+│   ├── main_window.py                   # Главное окно: 3 вкладки, меню, OllamaManager, SharedBottomBar
 │   ├── chat_widget.py                   # QTextBrowser + стриминг токенов + копирование кода
 │   ├── cleanup_dialog.py                # Диалог освобождения ресурсов при закрытии (5 шагов)
 │   ├── settings_panel.py                # Правая панель Ollama (модель, temperature, timeout)
-│   ├── shared_bottom_bar.py             # Общая нижняя панель: промпт, прогресс, таймер, RAM/CPU, индикатор ресурса
+│   ├── shared_bottom_bar.py             # Общая нижняя панель: промпт, прогресс, таймер, RAM/CPU, индикатор ресурса, единая кнопка действия
 │   ├── dialogs/                         # Диалоги настроек
 │   │   ├── paths_dialog.py              # Стартовый диалог настройки путей
 │   │   ├── diffusers_models_dialog.py   # Управление моделями (список, удалить, открыть)
+│   │   ├── history_save_dialog.py       # Диалог сохранения истории генерации
 │   │   └── settings/
 │   │       ├── settings_dialog.py       # Окно настроек (вкладки)
 │   │       ├── paths_settings_widget.py         # Вкладка Общие
@@ -64,17 +67,16 @@ LocalAILite/
     ├── pids/                            # PID-файлы (ollama.pid)
     └── previews/                        # Промежуточные PNG превью шагов (технические)
 
-## Потоки данных
+Потоки данных
 Чат с Ollama: SharedBottomBar -> MainWindow.on_prompt_submitted -> OllamaTab.handle_prompt -> OllamaClient (QThread) -> ChatWidget.append_token
-Генерация SDXL: SharedBottomBar -> DiffusersTab.handle_prompt -> DiffusersWorker (QProcess) -> scripts/generate_diffusers.py -> callback_on_step_end -> history_manager + VAE decoder
+Генерация SDXL: SharedBottomBar -> DiffusersTab.handle_prompt -> DiffusersWorker (QProcess) -> scripts/generate_diffusers.py -> callback_on_step_end -> history_manager
 Старт Ollama: MainWindow.init -> OllamaManager.start -> проверка порта -> QProcess("ollama serve") с LD_LIBRARY_PATH
 Закрытие: MainWindow.closeEvent -> CleanupDialog -> CleanupThread: стоп Diffusers -> выгрузка Ollama -> стоп сервера -> gc.collect()
-VAE Decoder: DiffusersWorker запускает vae_decoder_daemon.py через VAEManager (QProcess) -> декодирует step_NNNN.pt в step_NNNN.png
 Чекпоинты: Активный: data/checkpoints/checkpoint.json/.pt -> Архив: data/checkpoints/YYYY-MM-DD_HH-MM-SS.json/.pt
 История генерации: data/history/{timestamp}/step_NNNN.png + step_NNNN.pt + step_NNNN.json + metadata.json
 
-## Управление ресурсами
-ResourceManager управляет тремя арендаторами: Ollama, Diffusers, VAE Decoder.
+Управление ресурсами
+ResourceManager управляет двумя арендаторами: Ollama, Diffusers.
 Только один модуль может генерировать одновременно (кнопка "Запустить" блокируется).
-Табы переключаются свободно, выгрузка неактивных модулей через unload().
+Табы переключаются свободно, выгрузка неактивных модулей через unload() (не останавливает активную генерацию).
 ResourceMonitor проверяет RAM перед запуском, применяет CPU affinity и nice-приоритет.
