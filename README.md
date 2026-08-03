@@ -13,9 +13,9 @@
 | Модуль | Версия | Роль |
 |--------|--------|------|
 | main.py | v1.2.0 | Точка входа: QApplication, валидация путей, запуск MainWindow |
-| ui/main_window.py | v1.2.0 | Главное окно: 3 вкладки, меню, OllamaManager, SharedBottomBar |
+| ui/main_window.py | v1.2.1 | Главное окно: 3 вкладки, меню, OllamaManager, SharedBottomBar |
 | ui/shared_bottom_bar.py | v1.2.0 | Общая нижняя панель: промпт, прогресс, таймер, RAM/CPU, индикатор ресурса, радиокнопки, единая кнопка действия |
-| ui/cleanup_dialog.py | v1.2.0 | Диалог освобождения ресурсов при закрытии (5 шагов) |
+| ui/cleanup_dialog.py | v1.2.1 | Диалог освобождения ресурсов при закрытии (5 шагов) |
 | ui/chat_widget.py | v1.0.0 | QTextBrowser + стриминг токенов + копирование кода |
 | ui/settings_panel.py | v1.0.0 | Правая панель Ollama (модель, temperature, timeout) |
 
@@ -24,7 +24,7 @@
 | Модуль | Версия | Роль |
 |--------|--------|------|
 | ui/tabs/ollama_tab.py | v1.2.0 | Чат: ChatWidget + SettingsPanel + OllamaClient, acquire/release ресурса |
-| ui/tabs/diffusers_tab.py | v1.2.0 | Генерация: preview + settings + DiffusersWorker, управление чекпоинтами и историей |
+| ui/tabs/diffusers_tab.py | v1.2.1 | Генерация: preview + settings + DiffusersWorker, управление чекпоинтами и историей |
 | ui/tabs/diffusers_settings_panel.py | v1.0.0 | Настройки Diffusers + список архивных чекпоинтов |
 | ui/tabs/image_prep_tab.py | v1.1.0 | Visual editor: превью + галерея + обработка изображений |
 | ui/tabs/image_prep_panel.py | v1.1.0 | Правая панель Visual editor (пресет, crop mode) |
@@ -40,7 +40,7 @@
 | core/checkpoint_manager.py | v1.0.0 | Чекпоинты: JSON + PT, архивация с timestamp |
 | core/history_manager.py | v1.1.0 | Менеджер истории: data/history/{timestamp}/, метаданные, PNG на каждом шаге |
 | core/resource_manager.py | v1.2.0 | Управление ресурсом (GPU/RAM): acquire/release, 2 арендатора (Ollama, Diffusers) |
-| core/resource_monitor.py | v1.2.0 | Мониторинг RAM/CPU, оценка потребления, лимиты, CPU affinity |
+| core/resource_monitor.py | v1.2.1 | Мониторинг RAM/CPU, реальная проверка RAM (psutil.virtual_memory), оценка SDXL 9–11 GB, лимиты, CPU affinity, управление процессами по PID |
 | core/image_processor.py | v1.1.0 | Обработка изображений: resize, crop (center/letterbox/stretch) |
 | core/path_validator.py | v1.0.0 | Валидация venv, моделей, output, Ollama URL |
 | core/markdown_parser.py | v1.0.0 | Markdown в HTML с адаптацией под системную тему KDE |
@@ -49,15 +49,17 @@
 
 | Модуль | Версия | Роль |
 |--------|--------|------|
-| scripts/generate_diffusers.py | v1.2.0 | CLI-генерация SDXL, callback_on_step_end, history_dir, resume, оптимизация CPU |
+| scripts/generate_diffusers.py | v1.2.1 | CLI-генерация SDXL, callback_on_step_end, history_dir, точный resume (срез timesteps + компенсация init_noise_sigma), защита от перезаписи, оптимизация CPU |
 | scripts/encode_image.py | v1.1.0 | Кодирование изображения в latents через VAE (для img2img) |
 | scripts/test_vae_roundtrip.py | v1.1.0 | Тест VAE encode/decode roundtrip |
+| scripts/compare_images.py | v1.2.1 | Попиксельное сравнение изображений через numpy (для проверки точности resume) |
 
 ### Утилиты
 
 | Модуль | Версия | Роль |
 |--------|--------|------|
 | utils/config.py | v1.1.0 | QSettings-обёртка + пути (data/, bin/ollama/, history/, init_images/) |
+| get_context.sh | v1.2.1 | Точечная выгрузка файлов проекта для LLM (вместо полного full_context.py) |
 
 ---
 

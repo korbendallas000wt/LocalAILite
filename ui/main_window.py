@@ -41,8 +41,6 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.shared_bar)
         
         # Синхронизация радиокнопок с табами
-        self.shared_bar.ollama_radio.toggled.connect(self._on_radio_toggled)
-        self.shared_bar.diffusers_radio.toggled.connect(self._on_radio_toggled)
         
         self.setCentralWidget(central_widget)
         
@@ -81,7 +79,12 @@ class MainWindow(QMainWindow):
         if hasattr(first_tab, '_bar_state'):
             state = first_tab._bar_state
             self.shared_bar.set_prompt(state["prompt"])
+            self.shared_bar.set_progress(state["progress_current"], state["progress_total"])
             self.shared_bar.set_status(state["status"], state.get("status_color"))
+        if "elapsed_seconds" in state:
+            self.shared_bar.set_timer_display(state["elapsed_seconds"])
+        if "elapsed_seconds" in state:
+            self.shared_bar.set_timer_display(state["elapsed_seconds"])
         
         self._update_status()
         
@@ -101,11 +104,30 @@ class MainWindow(QMainWindow):
         settings_action = QAction("Настройки...", self)
         settings_action.triggered.connect(self._show_settings_dialog)
         settings_menu.addAction(settings_action)
+        
+        # Освобождение ресурсов
+        tools_menu = menubar.addMenu("Инструменты")
+        cleanup_action = QAction("🧹 Освободить ресурсы", self)
+        cleanup_action.triggered.connect(self._manual_cleanup)
+        tools_menu.addAction(cleanup_action)
     
     def _show_settings_dialog(self):
         dialog = SettingsDialog(self.config, self)
         if dialog.exec():
             self._update_status()
+    
+    def _manual_cleanup(self):
+        """Ручной вызов очистки ресурсов (без закрытия приложения)"""
+        from ui.cleanup_dialog import CleanupDialog
+        cleanup_dialog = CleanupDialog(
+            self.ollama_tab,
+            self.diffusers_tab,
+            self.config,
+            self.ollama_manager,
+            self,
+            manual_mode=True
+        )
+        cleanup_dialog.exec()
     
     def _update_status(self):
         validator = PathValidator()
@@ -141,17 +163,14 @@ class MainWindow(QMainWindow):
             state = active_tab._bar_state
             self.shared_bar.set_prompt(state["prompt"])
             self.shared_bar.set_progress(state["progress_current"], state["progress_total"])
+        if "elapsed_seconds" in state:
+            self.shared_bar.set_timer_display(state["elapsed_seconds"])
             self.shared_bar.set_status(state["status"], state.get("status_color"))
             
-            if state["is_running"]:
-                self.shared_bar.start_timer()
-            else:
-                self.shared_bar.stop_timer()
         
         self._prev_index = index
         
         # Синхронизируем радиокнопки с активным табом
-        self._sync_radio_with_tab(index)
     
     def _on_prompt_changed(self, text):
         """Изменение промпта"""
@@ -171,22 +190,19 @@ class MainWindow(QMainWindow):
             self.shared_bar.set_progress(state["progress_current"], state["progress_total"])
         if "status" in state:
             self.shared_bar.set_status(state["status"], state.get("status_color"))
+        if "elapsed_seconds" in state:
+            self.shared_bar.set_timer_display(state["elapsed_seconds"])
         
         if state.get("is_running"):
-            self.shared_bar.start_timer()
             self.shared_bar.set_running_state(True)
 
         else:
-            self.shared_bar.stop_timer()
             self.shared_bar.set_running_state(False)
     def _set_active_tab_status(self, message: str, color: str = "#DAA520"):
         """Устанавливает статус через активный таб (не напрямую в SharedBottomBar)"""
         active_tab = self.tabs.currentWidget()
         if hasattr(active_tab, '_set_status'):
             active_tab._set_status(message, color)
-        else:
-            self.shared_bar.stop_timer()
-            self.shared_bar.set_running_state(False)
     
     def _on_blocked_action(self, text):
         """Действие заблокировано"""
@@ -205,8 +221,23 @@ class MainWindow(QMainWindow):
             active_tab.handle_prompt(prompt)
     
     def on_generation_stopped(self):
-        """Останавливает генерацию в активном модуле"""
+        """Останавливает генерацию только из целевой вкладки"""
+        if not self.resource_manager.is_resource_busy():
+            return
+        
+        owner = self.resource_manager.get_resource_owner()
         active_tab = self.tabs.currentWidget()
+        
+        # Определяем индекс вкладки-владельца
+        owner_index = 0 if owner == "ollama" else 1 if owner == "diffusers" else -1
+        
+        if owner_index >= 0 and self.tabs.currentIndex() != owner_index:
+            # Переключаем на целевую вкладку
+            self.tabs.setCurrentIndex(owner_index)
+            self._set_active_tab_status(f"⚠ Перейдите на вкладку {owner} для остановки", "orange")
+            return
+        
+        # Мы на целевой вкладке — останавливаем
         if hasattr(active_tab, 'stop_generation'):
             active_tab.stop_generation()
     
@@ -215,7 +246,7 @@ class MainWindow(QMainWindow):
         for i in range(self.tabs.count()):
             tab = self.tabs.widget(i)
             if hasattr(tab, '_bar_state'):
-                tab_name = "ollama" if i == 0 else "diffusers"
+                tab_name = ["ollama", "diffusers", "image_prep"][i] if i < 3 else f"tab_{i}"
                 saved_state = self.config.get_json(f"bar_state/{tab_name}")
                 if saved_state:
                     for key in tab._bar_state.keys():
@@ -230,7 +261,7 @@ class MainWindow(QMainWindow):
         for i in range(self.tabs.count()):
             tab = self.tabs.widget(i)
             if hasattr(tab, '_bar_state'):
-                tab_name = "ollama" if i == 0 else "diffusers"
+                tab_name = ["ollama", "diffusers", "image_prep"][i] if i < 3 else f"tab_{i}"
                 self.config.set_json(f"bar_state/{tab_name}", tab._bar_state)
     
     # === Ollama Manager handlers ===
@@ -296,43 +327,6 @@ class MainWindow(QMainWindow):
         """Скачивает Ollama"""
         self.ollama_tab._set_status("⚠ Скачивание Ollama пока не реализовано", "orange")
     
-    def _sync_radio_with_tab(self, index):
-        """Синхронизирует радиокнопки с активным табом"""
-        self.shared_bar.ollama_radio.blockSignals(True)
-        self.shared_bar.diffusers_radio.blockSignals(True)
-        
-        if index == 0:  # Ollama
-            self.shared_bar.ollama_radio.setChecked(True)
-        elif index == 1:  # Diffusers
-            self.shared_bar.diffusers_radio.setChecked(True)
-        elif index == 2:  # Visual Editor
-            self.shared_bar.diffusers_radio.setChecked(True)
-        
-        self.shared_bar.ollama_radio.blockSignals(False)
-        self.shared_bar.diffusers_radio.blockSignals(False)
-    
-    def _on_radio_toggled(self, checked):
-        """Обработка клика по радиокнопке"""
-        if not checked:
-            return
-        
-        sender = self.sender()
-        if sender == self.shared_bar.ollama_radio:
-            target_index = 0
-        elif sender == self.shared_bar.diffusers_radio:
-            target_index = 1
-        else:
-            return
-        
-        if self.tabs.currentIndex() != target_index:
-            self.tabs.setCurrentIndex(target_index)
-    
-    
-    
-    
-    
-    
-    
     def closeEvent(self, event):
         """Показывает диалог очистки при закрытии"""
         # Сохраняем состояние
@@ -349,7 +343,8 @@ class MainWindow(QMainWindow):
             self.diffusers_tab,
             self.config,
             self.ollama_manager,
-            self
+            self,
+            manual_mode=False
         )
         
         # Блокируем закрытие до завершения очистки
@@ -362,10 +357,10 @@ class MainWindow(QMainWindow):
     
     def _on_resource_acquired(self, module_name):
         """Ресурс захвачен модулем"""
-        self.shared_bar.set_resource_state(True, module_name)
+        self.shared_bar.set_mode(module_name)
         self._set_active_tab_status(f"⚠ {module_name}: генерация...", "orange")
     
     def _on_resource_released(self):
         """Ресурс освобождён"""
-        self.shared_bar.set_resource_state(False)
+        self.shared_bar.set_mode("free")
         self._set_active_tab_status("Готово", "green")

@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QProgressBar,
                              QPushButton, QApplication)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtCore import QProcess
+import os
 
 
 class CleanupThread(QThread):
@@ -10,18 +11,20 @@ class CleanupThread(QThread):
     step_finished = pyqtSignal(bool, str)  # успех, сообщение
     all_done = pyqtSignal()                # всё завершено
 
-    def __init__(self, ollama_tab, diffusers_tab, config, ollama_manager):
+    def __init__(self, ollama_tab, diffusers_tab, config, ollama_manager, manual_mode=False):
         super().__init__()
         self.ollama_tab = ollama_tab
         self.diffusers_tab = diffusers_tab
         self.config = config
         self.ollama_manager = ollama_manager
+        self.manual_mode = manual_mode
 
     def run(self):
         """Выполняет все шаги очистки"""
         # === Шаг 1: Остановка DiffusersWorker ===
         self.step_started.emit("Остановка Diffusers...")
         try:
+            # 1.1. Пытаемся остановить через worker (если существует)
             if self.diffusers_tab.worker:
                 if self.diffusers_tab.worker.process:
                     state = self.diffusers_tab.worker.process.state()
@@ -33,6 +36,16 @@ class CleanupThread(QThread):
                 # Закрываем файл лога
                 self.diffusers_tab.worker._close_log_file()
                 self.diffusers_tab.worker = None
+            
+            # 1.2. Проверяем PID-файл (на случай, если worker потерялся)
+            from core.resource_monitor import ResourceMonitor
+            pid_path = os.path.join(self.config.get_data_dir(), "pids", "diffusers.pid")
+            pid = ResourceMonitor.read_pid_file(pid_path)
+            if pid > 0 and ResourceMonitor.is_process_alive(pid):
+                ResourceMonitor.kill_process_by_pid(pid, force=True)
+                self.step_finished.emit(True, f"Diffusers убит по PID ({pid})")
+            elif os.path.exists(pid_path):
+                os.remove(pid_path)
                 self.step_finished.emit(True, "Diffusers остановлен")
             else:
                 self.step_finished.emit(True, "Diffusers не запущен")
@@ -117,12 +130,13 @@ class CleanupThread(QThread):
 
 class CleanupDialog(QDialog):
     """Диалог очистки ресурсов при закрытии"""
-    def __init__(self, ollama_tab, diffusers_tab, config, ollama_manager, parent=None):
+    def __init__(self, ollama_tab, diffusers_tab, config, ollama_manager, parent=None, manual_mode=False):
         super().__init__(parent)
         self.ollama_tab = ollama_tab
         self.diffusers_tab = diffusers_tab
         self.config = config
         self.ollama_manager = ollama_manager
+        self.manual_mode = manual_mode
 
         self.setWindowTitle("Закрытие приложения")
         self.setFixedSize(400, 240)
@@ -159,7 +173,8 @@ class CleanupDialog(QDialog):
 
         # Создаём поток очистки
         self.cleanup_thread = CleanupThread(
-            ollama_tab, diffusers_tab, config, ollama_manager
+            ollama_tab, diffusers_tab, config, ollama_manager,
+            manual_mode=manual_mode
         )
         self.cleanup_thread.step_started.connect(self._on_step_started)
         self.cleanup_thread.step_finished.connect(self._on_step_finished)

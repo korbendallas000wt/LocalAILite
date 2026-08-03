@@ -121,7 +121,8 @@ class OllamaManager(QObject):
         # Открываем файл лога
         log_dir = os.path.join(app_dir, "data", "logs")
         os.makedirs(log_dir, exist_ok=True)
-        self._log_path = os.path.join(log_dir, "ollama.log")
+        date_str = time.strftime("%Y-%m-%d")
+        self._log_path = os.path.join(log_dir, f"ollama_{date_str}.log")
 
         try:
             self._log_file = open(self._log_path, "a", encoding="utf-8")

@@ -1,18 +1,17 @@
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
                               QPushButton, QFileDialog, QGraphicsView,
                               QGraphicsScene, QGraphicsPixmapItem, QMessageBox)
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QPixmap
 from ui.tabs.diffusers_settings_panel import DiffusersSettingsPanel
 from ui.dialogs.history_save_dialog import HistorySaveDialog
 from core.diffusers_worker import DiffusersWorker
 from core import history_manager
-from core.checkpoint_manager import (
-    archive_checkpoint, checkpoint_exists, delete_checkpoint, load_archived_metadata
-)
+from core.checkpoint_manager import load_step_metadata
 import os
 import json
 import subprocess
+import time
 
 class DiffusersTab(QWidget):
     """Вкладка Diffusers с состоянием для SharedBottomBar"""
@@ -32,11 +31,19 @@ class DiffusersTab(QWidget):
         self.config = config
         self.resource_manager = resource_manager
         self.worker = None
-        self._resume_from_archive = False
-        self._archive_checkpoint_file = None
+        self._resume_from_history = False
+        self._history_dir_for_resume = None
+        self._step_file_for_resume = None
+        self._start_step_for_resume = 0
         self._was_stopped = False  # Флаг остановки генерации
         self._history_dialog_shown = False  # Флаг показа диалога сохранения истории
         self._last_step_on_stop = None  # Последний шаг при остановке
+
+        import time
+        self._generation_timer = QTimer()
+        self._generation_timer.setInterval(1000)
+        self._generation_timer.timeout.connect(self._update_generation_time)
+        self._generation_start_time = None
         
         # Буфер бегущей строки статуса
         
@@ -46,6 +53,7 @@ class DiffusersTab(QWidget):
             "progress_total": 0,
             "status": "Готово",
             "status_color": "green",
+        "elapsed_seconds": 0,
             "is_running": False
         }
         
@@ -71,42 +79,84 @@ class DiffusersTab(QWidget):
         layout.addWidget(self.settings_panel, 1)
         
         self.settings_panel.steps_spin.valueChanged.connect(self._on_steps_changed)
-        self.settings_panel.load_checkpoint_btn.clicked.connect(self._on_load_checkpoint)
-        self.settings_panel.load_checkpoints_list()
-    
+        self.settings_panel.checkpoint_selected.connect(self._on_checkpoint_selected)
+        self.settings_panel.init_image_selected.connect(self._on_init_image_selected)
+        self.settings_panel.mode_changed.connect(self._on_mode_changed)
+        self._on_mode_changed("create")
+                    
     def _on_steps_changed(self, value):
         self.state_changed.emit(self._bar_state.copy())
     
-    def _on_load_checkpoint(self):
-        """Загружает метаданные выбранного архивного чекпоинта"""
-        filename = self.settings_panel.get_selected_checkpoint()
-        if not filename:
-            QMessageBox.information(
-                self, "Чекпоинт",
-                "Выберите чекпоинт из списка"
-            )
+    def _on_checkpoint_selected(self, history_dir: str, step_filename: str):
+        """Обработка выбора папки истории и конкретного шага"""
+        # Загружаем метаданные конкретного шага (содержат ВСЕ параметры генерации)
+        step_json_file = step_filename.replace(".pt", ".json")
+        step_meta = load_step_metadata(history_dir, step_json_file)
+        if not step_meta:
+            QMessageBox.warning(self, "Ошибка", f"Не удалось загрузить {step_json_file}")
             return
         
-        json_data = load_archived_metadata(filename)
-        if not json_data:
-            QMessageBox.warning(self, "Ошибка", "Не удалось загрузить чекпоинт")
-            return
+        # Нормализуем метаданные для set_params_from_checkpoint
+        normalized = {
+            "prompt": step_meta.get("prompt", ""),
+            "negative_prompt": step_meta.get("negative_prompt", ""),
+            "model": step_meta.get("model", ""),
+            "scheduler": step_meta.get("scheduler", ""),
+            "total_steps": step_meta.get("steps", 0),
+            "cfg": step_meta.get("cfg", 0),
+            "seed": step_meta.get("seed", -1),
+            "width": step_meta.get("width", 1024),
+            "height": step_meta.get("height", 1024)
+        }
         
-        self.settings_panel.set_params_from_checkpoint(json_data)
-        self._resume_from_archive = True
-        self._archive_checkpoint_file = filename
+        # Заполняем поля настроек
+        self.settings_panel.set_params_from_checkpoint(normalized)
         
-        current_step = json_data.get("current_step", 0)
-        total_steps = json_data.get("total_steps", 0)
+        # Сохраняем информацию для resume
+        self._resume_from_history = True
+        self._history_dir_for_resume = history_dir
+        self._step_file_for_resume = step_filename
+        self._start_step_for_resume = step_meta.get("step", 0)
         
-        self._bar_state["prompt"] = json_data.get("prompt", "")
+        # Обновляем состояние UI
+        total_steps = step_meta.get("steps", 0)
+        current_step = step_meta.get("step", 0)
+        self._bar_state["prompt"] = step_meta.get("prompt", "")
         self._bar_state["progress_current"] = current_step
         self._bar_state["progress_total"] = total_steps
+        
         self._set_status(
-            f"💾 Чекпоинт загружен. Нажмите Запустить для продолжения "
+            f"💾 История загружена. Нажмите Запустить для продолжения "
             f"с шага {current_step}/{total_steps}",
             "#DAA520"
         )
+
+    def _on_init_image_selected(self, filename: str):
+        """Обработка выбора init-картинки"""
+        self._set_status(f"🖼 Выбрана картинка: {filename}", "#DAA520")
+    
+    def _on_mode_changed(self, mode: str):
+        """Обработка смены режима"""
+        if mode == "create":
+            # Strength, Чекпоинт, Картинка — серые
+            self.settings_panel.set_field_enabled("strength", False)
+            self.settings_panel.set_field_enabled("checkpoint", False)
+            self.settings_panel.set_field_enabled("init_image", False)
+            self._set_status("Режим: Создание с нуля", "green")
+        
+        elif mode == "resume":
+            # Strength, Картинка — серые; Чекпоинт — активен
+            self.settings_panel.set_field_enabled("strength", False)
+            self.settings_panel.set_field_enabled("checkpoint", True)
+            self.settings_panel.set_field_enabled("init_image", False)
+            self._set_status("Режим: Продолжение из чекпоинта", "#DAA520")
+        
+        elif mode == "edit":
+            # Чекпоинт — серый; Strength, Картинка — активны
+            self.settings_panel.set_field_enabled("strength", True)
+            self.settings_panel.set_field_enabled("checkpoint", False)
+            self.settings_panel.set_field_enabled("init_image", True)
+            self._set_status("Режим: Изменение картинки (img2img)", "#DAA520")
     
     def get_bar_state(self) -> dict:
         return self._bar_state.copy()
@@ -126,6 +176,12 @@ class DiffusersTab(QWidget):
         self._bar_state["status"] = message
         self._bar_state["status_color"] = color
         self.state_changed.emit(self._bar_state.copy())
+    def _update_generation_time(self):
+        """Обновляет elapsed_seconds каждую секунду"""
+        if self._generation_start_time:
+            elapsed = int(time.time() - self._generation_start_time)
+            self.update_bar_state("elapsed_seconds", elapsed)
+
     def handle_prompt(self, prompt):
         """Запуск генерации"""
         negative_prompt = self.settings_panel.negative_prompt.toPlainText()
@@ -138,49 +194,39 @@ class DiffusersTab(QWidget):
         
         if not self.resource_manager.acquire_resource("diffusers"):
             self._set_status("⚠ Ресурс занят другой моделью", "orange")
-            self.update_bar_state("is_running", False)
-            return
-        
         self.update_bar_state("is_running", True)
+        self._generation_start_time = time.time()
+        self._generation_timer.start()
         self._set_status("Загрузка модели...", "#DAA520")
         self.update_bar_state("progress_total", params["steps"])
-        self.update_bar_state("progress_current", 0)
         
         resume = False
-        checkpoint_file = None
+        history_dir = None
+        step_file = None
+        start_step = 0
         
-        if self._resume_from_archive:
+        if self._resume_from_history:
             resume = True
-            checkpoint_file = self._archive_checkpoint_file
-            self._resume_from_archive = False
-            self._archive_checkpoint_file = None
+            history_dir = self._history_dir_for_resume
+            step_file = self._step_file_for_resume
+            start_step = self._start_step_for_resume
+            # При resume — НЕ сбрасываем progress_current
+            self.update_bar_state("progress_current", start_step)
+            # Сбрасываем флаги
+            self._resume_from_history = False
+            self._history_dir_for_resume = None
+            self._step_file_for_resume = None
+            self._start_step_for_resume = 0
         else:
-            # Проверяем наличие активного чекпоинта
-            checkpoint_info = self._check_checkpoint()
-            if checkpoint_info:
-                msg = (
-                    f"Найден чекпоинт от предыдущей генерации:\n\n"
-                    f"Промпт: {checkpoint_info['prompt'][:60]}{'...' if len(checkpoint_info['prompt']) > 60 else ''}\n"
-                    f"Модель: {checkpoint_info['model']}\n"
-                    f"Прогресс: {checkpoint_info['current_step']}/{checkpoint_info['total_steps']} шагов\n"
-                    f"Размер: {checkpoint_info['width']}×{checkpoint_info['height']}\n"
-                    f"Seed: {checkpoint_info['seed']}\n\n"
-                    f"Продолжить генерацию или начать заново?"
-                )
-                reply = QMessageBox.question(
-                    self,
-                    "Найден чекпоинт",
-                    msg,
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.Yes
-                )
-                resume = (reply == QMessageBox.StandardButton.Yes)
+            # При обычной генерации — сбрасываем progress_current
+            self.update_bar_state("progress_current", 0)
         
         self._start_generation(prompt, negative_prompt, params,
-                               resume=resume, checkpoint_file=checkpoint_file)
+                               resume=resume, history_dir=history_dir,
+                               step_file=step_file, start_step=start_step)
     
     def _start_generation(self, prompt, negative_prompt, params,
-                          resume=False, checkpoint_file=None):
+                          resume=False, history_dir=None, step_file=None, start_step=0):
         """Запускает генерацию (новую или продолжение)"""
         self.worker = DiffusersWorker(self.config)
         self.worker.step_updated.connect(self._on_step_updated)
@@ -190,7 +236,8 @@ class DiffusersTab(QWidget):
         self.worker.log_line.connect(self._on_log_line)
         
         self.worker.start(prompt, negative_prompt, params,
-                          resume=resume, checkpoint_file=checkpoint_file)
+                          resume=resume, history_dir=history_dir,
+                          step_file=step_file, start_step=start_step)
         
         self.generation_started.emit()
     
@@ -206,6 +253,8 @@ class DiffusersTab(QWidget):
     
     def stop_generation(self):
         """Остановка генерации"""
+        self._generation_timer.stop()
+        self._generation_start_time = None
         if self.worker:
             self._was_stopped = True
             
@@ -225,6 +274,7 @@ class DiffusersTab(QWidget):
         main_window = self.window()
         if isinstance(main_window, MainWindow):
             main_window.shared_bar.set_stopping_state()
+        if self.worker:
             self.worker.stop()
     
     def unload(self):
@@ -246,10 +296,12 @@ class DiffusersTab(QWidget):
     
     def _on_generation_finished(self, final_path, seed):
         """Генерация завершена"""
+        # Останавливаем таймер
+        self._generation_timer.stop()
+        self._generation_start_time = None
+        
         # Сбрасываем состояние генерации
         self.update_bar_state("is_running", False)
-        # Освобождаем ресурс (КРИТИЧНО!)
-        self.resource_manager.release_resource()
         
         # Определяем, была ли это остановка
         is_stopped = self._was_stopped
@@ -258,45 +310,12 @@ class DiffusersTab(QWidget):
         if final_path and os.path.exists(final_path):
             self._update_preview(final_path)
         
-        self._resume_from_archive = False
         
-        # Если был resume из архива — удаляем исходный архивный чекпоинт
-        if self._archive_checkpoint_file:
-            try:
-                checkpoint_dir = os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)),
-                    "..", "data", "checkpoints"
-                )
-                json_path = os.path.join(checkpoint_dir, self._archive_checkpoint_file)
-                pt_path = json_path.replace('.json', '.pt')
                 
-                if os.path.exists(json_path):
-                    os.remove(json_path)
-                if os.path.exists(pt_path):
-                    os.remove(pt_path)
-            except Exception:
-                pass
-            self._archive_checkpoint_file = None
-        
         # Обновляем список чекпоинтов
-        self.settings_panel.load_checkpoints_list()
-        
+                
         # При остановке — спрашиваем о сохранении чекпоинта
-        if is_stopped and checkpoint_exists():
-            reply = QMessageBox.question(
-                self,
-                "Сохранить прогресс?",
-                "Сохранить прогресс генерации для продолжения позже?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                archive_checkpoint()
-                self._set_status("💾 Чекпоинт сохранён", "green")
-            else:
-                delete_checkpoint()
-                self._set_status("Генерация остановлена", "orange")
-        
+                
         # Показываем диалог сохранения истории (только один раз)
         if not self._history_dialog_shown:
             self._history_dialog_shown = True
@@ -309,8 +328,10 @@ class DiffusersTab(QWidget):
         # Освобождаем ресурс (КРИТИЧНО!)
         self.resource_manager.release_resource()
         
-        self._resume_from_archive = False
-        self._archive_checkpoint_file = None
+        self._resume_from_history = False
+        self._history_dir_for_resume = None
+        self._step_file_for_resume = None
+        self._start_step_for_resume = 0
         self.update_bar_state("is_running", False)
         self._set_status(f"Ошибка: {error_msg}", "red")
         self.generation_error.emit(error_msg)
@@ -319,33 +340,6 @@ class DiffusersTab(QWidget):
         """Статусы приложения — золотым цветом"""
         self._set_status(message, "#DAA520")
         self.status_message.emit(message)
-    
-    def _check_checkpoint(self):
-        """Проверяет наличие активного чекпоинта"""
-        checkpoint_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "..", "data", "checkpoints"
-        )
-        json_path = os.path.join(checkpoint_dir, "checkpoint.json")
-        pt_path = os.path.join(checkpoint_dir, "checkpoint.pt")
-        
-        if not os.path.exists(json_path) or not os.path.exists(pt_path):
-            return None
-        
-        try:
-            with open(json_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return {
-                "prompt": data.get("prompt", ""),
-                "model": os.path.basename(data.get("model", "")),
-                "current_step": data.get("current_step", 0),
-                "total_steps": data.get("total_steps", 0),
-                "seed": data.get("seed", -1),
-                "width": data.get("width", 0),
-                "height": data.get("height", 0)
-            }
-        except Exception:
-            return None
     
     def _update_preview(self, image_path):
         """Загружает изображение в QGraphicsView"""
@@ -372,6 +366,11 @@ class DiffusersTab(QWidget):
             self.update_bar_state("status", "Готово")
             self.update_bar_state("progress_current", 0)
             self.generation_finished.emit()
+            self.resource_manager.release_resource()
+            from ui.main_window import MainWindow
+            main_window = self.window()
+            if isinstance(main_window, MainWindow):
+                main_window.shared_bar.reset_action_state()
             return
         
         dialog = HistorySaveDialog(is_stopped=is_stopped, parent=self)
@@ -399,6 +398,13 @@ class DiffusersTab(QWidget):
         self.update_bar_state("progress_current", 0)
         self.generation_finished.emit()
     
+        # Освобождаем ресурс и сбрасываем кнопку
+        self.resource_manager.release_resource()
+        from ui.main_window import MainWindow
+        main_window = self.window()
+        if isinstance(main_window, MainWindow):
+            main_window.shared_bar.reset_action_state()
+
     def _on_delete_history(self, history_dir: str):
         """Обработка удаления истории"""
         try:
@@ -406,7 +412,18 @@ class DiffusersTab(QWidget):
             self.update_bar_state("is_running", False)
             self._set_status("История удалена", "green")
             self.update_bar_state("progress_current", 0)
+            # Освобождаем ресурс
+            self.resource_manager.release_resource()
+            
+            # Сбрасываем кнопку в ready
+            from ui.main_window import MainWindow
+            main_window = self.window()
+            if isinstance(main_window, MainWindow):
+                main_window.shared_bar.reset_action_state()
+            
             self.generation_finished.emit()
         except Exception as e:
             self._set_status(f"Ошибка удаления: {e}", "red")
+            # Освобождаем ресурс даже при ошибке
+            self.resource_manager.release_resource()
     

@@ -20,7 +20,8 @@ class DiffusersWorker(QObject):
         self._log_file = None
         self._log_path = None
 
-    def start(self, prompt, negative_prompt, params, resume=False, checkpoint_file=None):
+    def start(self, prompt, negative_prompt, params, resume=False,
+              history_dir=None, step_file=None, start_step=0):
         """Запускает процесс генерации"""
         self._stopped_by_user = False
 
@@ -29,10 +30,10 @@ class DiffusersWorker(QObject):
         config = Config()
         log_dir = config.get_logs_dir()
         os.makedirs(log_dir, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._log_path = os.path.join(log_dir, f"diffusers_{timestamp}.log")
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        self._log_path = os.path.join(log_dir, f"diffusers_{date_str}.log")
         try:
-            self._log_file = open(self._log_path, "w", encoding="utf-8")
+            self._log_file = open(self._log_path, "a", encoding="utf-8")
             self._log_file.write(f"=== Diffusers Generation Log ===\n")
             self._log_file.write(f"Prompt: {prompt}\n")
             self._log_file.write(f"Negative: {negative_prompt}\n")
@@ -44,7 +45,9 @@ class DiffusersWorker(QObject):
             self._log_file.write(f"Seed: {params.get('seed', -1)}\n")
             self._log_file.write(f"Device: {self.config.get('sdxl/device', 'cuda')}\n")
             self._log_file.write(f"Resume: {resume}\n")
-            self._log_file.write(f"Checkpoint file: {checkpoint_file}\n")
+            self._log_file.write(f"Resume history_dir: {history_dir}\n")
+            self._log_file.write(f"Resume step_file: {step_file}\n")
+            self._log_file.write(f"Resume start_step: {start_step}\n")
             self._log_file.write(f"Preview every: {params.get('preview_every', 0)}\n")
             self._log_file.write(f"Preview start: {params.get('preview_start', 1)}\n")
             self._log_file.write(f"Output dir: {self.config.get_sdxl_output_dir()}\n")
@@ -54,9 +57,15 @@ class DiffusersWorker(QObject):
             print(f"[DiffusersWorker] Не удалось открыть файл лога: {e}")
             self._log_file = None
 
-        # === Создаём папку истории ===
-        self._history_dir = history_manager.create_history_folder()
-        print(f"[DiffusersWorker] History folder: {self._history_dir}")
+        # === Создаём или используем существующую папку истории ===
+        if resume and history_dir:
+            # При resume — используем существующую папку
+            self._history_dir = history_dir
+            print(f"[DiffusersWorker] Resuming to existing history folder: {self._history_dir}")
+        else:
+            # При обычной генерации — создаём новую папку
+            self._history_dir = history_manager.create_history_folder()
+            print(f"[DiffusersWorker] New history folder: {self._history_dir}")
 
         venv_path = self.config.get_sdxl_venv_path()
         if not venv_path:
@@ -72,16 +81,16 @@ class DiffusersWorker(QObject):
             self._close_log_file()
             return
 
-        # Определяем полный путь к модели
-        model_name = params["model"]
+        # Получаем путь к папке моделей (для cache_dir)
         models_path = self.config.get_sdxl_models_path()
-        safetensors_path = os.path.join(models_path, f"{model_name}.safetensors")
-        ckpt_path = os.path.join(models_path, f"{model_name}.ckpt")
-        if os.path.isfile(safetensors_path):
-            model_path = safetensors_path
-        elif os.path.isfile(ckpt_path):
-            model_path = ckpt_path
-        else:
+        
+        # Определяем полный путь к модели через реестр
+        model_name = params["model"]
+        from core.models_registry import get_model_path_by_name
+        model_path = get_model_path_by_name(self.config, model_name)
+        
+        if not model_path:
+            # Fallback: используем имя как есть
             model_path = model_name
 
         args = [
@@ -107,8 +116,11 @@ class DiffusersWorker(QObject):
             args.append("--no-safety-checker")
         if resume:
             args.append("--resume")
-            if checkpoint_file:
-                args.extend(["--checkpoint-file", checkpoint_file])
+            if history_dir:
+                args.extend(["--resume-history-dir", history_dir])
+            if step_file:
+                args.extend(["--resume-step-file", step_file])
+            args.extend(["--resume-start-step", str(start_step)])
 
         # === Проверка RAM ===
         monitor = ResourceMonitor(self.config)
@@ -150,6 +162,18 @@ class DiffusersWorker(QObject):
             ResourceMonitor.apply_cpu_affinity(pid, limits["cpu_cores"])
             ResourceMonitor.apply_priority(pid, limits["cpu_priority"])
             print(f"[DiffusersWorker] CPU limits applied: cores={limits['cpu_cores']}, priority={limits['cpu_priority']}", flush=True)
+            
+            # Сохраняем PID в файл
+            from utils.config import Config
+            config = Config()
+            pid_dir = os.path.join(config.get_data_dir(), "pids")
+            os.makedirs(pid_dir, exist_ok=True)
+            pid_path = os.path.join(pid_dir, "diffusers.pid")
+            try:
+                with open(pid_path, "w") as f:
+                    f.write(str(pid))
+            except Exception as e:
+                print(f"[DiffusersWorker] Не удалось сохранить PID: {e}")
 
     def get_history_dir(self):
         """Возвращает путь к папке истории текущей генерации"""
@@ -162,6 +186,16 @@ class DiffusersWorker(QObject):
             self.process.terminate()
             if not self.process.waitForFinished(3000):
                 self.process.kill()
+        # Удаляем PID-файл
+        from utils.config import Config
+        config = Config()
+        pid_path = os.path.join(config.get_data_dir(), "pids", "diffusers.pid")
+        if os.path.exists(pid_path):
+            try:
+                os.remove(pid_path)
+            except Exception:
+                pass
+        
         self._close_log_file()
         self.generation_finished.emit("", -1)
 

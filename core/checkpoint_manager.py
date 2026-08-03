@@ -1,215 +1,35 @@
 """
 Менеджер чекпоинтов для Resume генерации.
-Сохраняет состояние генерации (latents, scheduler, generator) и метаданные.
-
-Примечание: torch импортируется лениво внутри функций, которые работают с PT-файлами.
-Функции, работающие только с JSON (load_archived_metadata, list_archived_checkpoints,
-archive_checkpoint и т.д.), не требуют torch и могут вызываться из UI.
+Работает с папками истории data/history/{timestamp}/.
+Каждая папка содержит:
+  - step_NNNN.pt  — латенты на каждом шаге
+  - step_NNNN.json — метаданные шага (step, timestep, seed)
+  - metadata.json — общие параметры генерации
 """
 import os
 import json
-from datetime import datetime
 
-# Путь к папке чекпоинтов: data/checkpoints/ относительно корня проекта
-CHECKPOINT_DIR = os.path.join(
+# Путь к папке истории: data/history/
+HISTORY_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "..",
     "data",
-    "checkpoints"
+    "history"
 )
 
 
-def save_checkpoint(latents, scheduler, generator, params, current_step, remaining_timesteps, actual_seed=None, last_preview_path=""):
+def load_step_metadata(history_dir: str, step_filename: str) -> dict:
     """
-    Сохраняет чекпоинт генерации.
-    
+    Загружает метаданные конкретного шага (step_NNNN.json).
     Args:
-        latents: torch.Tensor - текущее состояние латентов
-        scheduler: scheduler объект - для сохранения внутреннего состояния
-        generator: torch.Generator - для восстановления детерминированности
-        params: dict - параметры генерации (prompt, model, seed, etc.)
-        current_step: int - текущий шаг (сколько шагов уже сделано)
-        remaining_timesteps: list - оставшиеся timesteps для продолжения
-        actual_seed: int - реальный seed (если был сгенерирован случайный)
-    """
-    import torch  # ленивый импорт — нужен только здесь
-    
-    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-    
-    # JSON с метаданными (читаемый формат)
-    json_data = {
-        "prompt": params["prompt"],
-        "negative_prompt": params.get("negative_prompt", ""),
-        "model": params["model"],
-        "scheduler": params["scheduler"],
-        "seed": actual_seed if actual_seed is not None else params["seed"],
-        "total_steps": params["total_steps"],
-        "current_step": current_step,
-        "width": params["width"],
-        "height": params["height"],
-        "cfg": params["cfg"],
-        "device": params["device"],
-        "remaining_timesteps": [
-            t.item() if torch.is_tensor(t) else t
-            for t in remaining_timesteps
-        ],
-        "preview_every": params.get("preview_every", 0),
-        "preview_start": params.get("preview_start", 1),
-        "last_preview_path": last_preview_path
-    }
-    
-    json_path = os.path.join(CHECKPOINT_DIR, "checkpoint.json")
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(json_data, f, indent=2, ensure_ascii=False)
-    
-    # PT с torch-объектами (бинарный формат)
-    torch_data = {
-        "latents": latents.cpu(),
-        "scheduler_state": scheduler.__dict__.copy(),
-        "generator_state": generator.get_state()
-    }
-    
-    pt_path = os.path.join(CHECKPOINT_DIR, "checkpoint.pt")
-    torch.save(torch_data, pt_path)
-
-
-def load_checkpoint():
-    """
-    Загружает активный чекпоинт (JSON + PT).
-    Используется в generate_diffusers.py при resume.
-    
-    Returns:
-        tuple: (json_data, torch_data) или (None, None) если чекпоинт не найден
-    """
-    import torch  # ленивый импорт
-    
-    json_path = os.path.join(CHECKPOINT_DIR, "checkpoint.json")
-    pt_path = os.path.join(CHECKPOINT_DIR, "checkpoint.pt")
-    
-    if not os.path.exists(json_path) or not os.path.exists(pt_path):
-        return None, None
-    
-    with open(json_path, "r", encoding="utf-8") as f:
-        json_data = json.load(f)
-    
-    # ИСПРАВЛЕНО: weights_only=False для PyTorch 2.6+
-    torch_data = torch.load(pt_path, map_location="cpu", weights_only=False)
-    
-    return json_data, torch_data
-
-
-def checkpoint_exists():
-    """
-    Проверяет наличие активного чекпоинта.
-    
-    Returns:
-        bool: True если чекпоинт существует
-    """
-    json_path = os.path.join(CHECKPOINT_DIR, "checkpoint.json")
-    pt_path = os.path.join(CHECKPOINT_DIR, "checkpoint.pt")
-    return os.path.exists(json_path) and os.path.exists(pt_path)
-
-
-def delete_checkpoint():
-    """Удаляет активный чекпоинт (после успешного завершения генерации)"""
-    json_path = os.path.join(CHECKPOINT_DIR, "checkpoint.json")
-    pt_path = os.path.join(CHECKPOINT_DIR, "checkpoint.pt")
-    
-    if os.path.exists(json_path):
-        os.remove(json_path)
-    if os.path.exists(pt_path):
-        os.remove(pt_path)
-
-
-def get_checkpoint_info():
-    """
-    Возвращает краткую информацию об активном чекпоинте (для UI).
-    
+        history_dir: путь к папке истории
+        step_filename: имя файла (например, "step_0015.json")
     Returns:
         dict или None
     """
-    json_path = os.path.join(CHECKPOINT_DIR, "checkpoint.json")
-    
+    json_path = os.path.join(history_dir, step_filename)
     if not os.path.exists(json_path):
         return None
-    
-    try:
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
-        return {
-            "prompt": data.get("prompt", "")[:50] + "..." if len(data.get("prompt", "")) > 50 else data.get("prompt", ""),
-            "model": os.path.basename(data.get("model", "")),
-            "current_step": data.get("current_step", 0),
-            "total_steps": data.get("total_steps", 0),
-            "seed": data.get("seed", -1),
-            "width": data.get("width", 0),
-            "height": data.get("height", 0)
-        }
-    except Exception:
-        return None
-
-
-def archive_checkpoint():
-    """
-    Переименовывает активный чекпоинт в архивный с timestamp.
-    Вызывается после завершения или остановки генерации.
-    """
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    json_src = os.path.join(CHECKPOINT_DIR, "checkpoint.json")
-    pt_src = os.path.join(CHECKPOINT_DIR, "checkpoint.pt")
-    json_dst = os.path.join(CHECKPOINT_DIR, f"{timestamp}.json")
-    pt_dst = os.path.join(CHECKPOINT_DIR, f"{timestamp}.pt")
-    
-    if os.path.exists(json_src):
-        os.rename(json_src, json_dst)
-    if os.path.exists(pt_src):
-        os.rename(pt_src, pt_dst)
-
-
-def list_archived_checkpoints():
-    """
-    Возвращает список архивных чекпоинтов (отсортированных по времени, новые первыми).
-    
-    Returns:
-        list[dict]: [{"timestamp": str, "filename": str, "display_name": str}, ...]
-    """
-    checkpoints = []
-    
-    if not os.path.exists(CHECKPOINT_DIR):
-        return checkpoints
-    
-    for filename in os.listdir(CHECKPOINT_DIR):
-        if filename.endswith('.json') and filename != 'checkpoint.json':
-            timestamp = filename[:-5]  # убираем .json
-            # Формат: 2026-07-05_14-30-45 → 2026-07-05 14:30:45
-            display_name = f"{timestamp[:10].replace('-', '.')} {timestamp[11:19].replace('-', ':')}"
-            checkpoints.append({
-                "timestamp": timestamp,
-                "filename": filename,
-                "display_name": display_name
-            })
-    
-    # Сортируем по timestamp (новые первыми)
-    return sorted(checkpoints, key=lambda x: x["timestamp"], reverse=True)
-
-
-def load_archived_metadata(filename):
-    """
-    Загружает ТОЛЬКО метаданные (JSON) из архивного чекпоинта.
-    НЕ требует torch — безопасна для вызова из UI.
-    
-    Args:
-        filename: имя файла (например, "2026-07-05_14-30-45.json")
-    
-    Returns:
-        dict или None
-    """
-    json_path = os.path.join(CHECKPOINT_DIR, filename)
-    
-    if not os.path.exists(json_path):
-        return None
-    
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -217,32 +37,89 @@ def load_archived_metadata(filename):
         return None
 
 
-def load_archived_checkpoint(filename):
+def load_generation_metadata(history_dir: str) -> dict:
     """
-    Загружает полный архивный чекпоинт (JSON + PT).
-    ТРЕБУЕТ torch — используется только в generate_diffusers.py.
-    
+    Загружает общие метаданные генерации (metadata.json).
     Args:
-        filename: имя файла (например, "2026-07-05_14-30-45.json")
-    
+        history_dir: путь к папке истории
     Returns:
-        tuple: (json_data, torch_data) или (None, None) если не найден
+        dict или None
     """
-    import torch  # ленивый импорт
-    
-    json_path = os.path.join(CHECKPOINT_DIR, filename)
-    pt_path = json_path.replace('.json', '.pt')
-    
-    if not os.path.exists(json_path) or not os.path.exists(pt_path):
-        return None, None
-    
+    json_path = os.path.join(history_dir, "metadata.json")
+    if not os.path.exists(json_path):
+        return None
     try:
         with open(json_path, "r", encoding="utf-8") as f:
-            json_data = json.load(f)
-        
-        # ИСПРАВЛЕНО: weights_only=False для PyTorch 2.6+
-        torch_data = torch.load(pt_path, map_location="cpu", weights_only=False)
-        
-        return json_data, torch_data
+            return json.load(f)
     except Exception:
-        return None, None
+        return None
+
+
+def load_step_latents(history_dir: str, step_filename: str):
+    """
+    Загружает латенты из step_NNNN.pt.
+    ТРЕБУЕТ torch — используется только в generate_diffusers.py.
+    Args:
+        history_dir: путь к папке истории
+        step_filename: имя файла (например, "step_0015.pt")
+    Returns:
+        torch.Tensor или None
+    """
+    import torch
+    pt_path = os.path.join(history_dir, step_filename)
+    if not os.path.exists(pt_path):
+        return None
+    try:
+        data = torch.load(pt_path, map_location="cpu", weights_only=False)
+        return data.get("latents")
+    except Exception:
+        return None
+
+
+def load_step_full(history_dir: str, step_filename: str) -> dict:
+    """
+    Загружает полный чекпоинт из step_NNNN.pt.
+    Включает: latents, scheduler_state, generator_state.
+    
+    Args:
+        history_dir: путь к папке истории
+        step_filename: имя файла (например, "step_0015.pt")
+    Returns:
+        dict с ключами "latents", "scheduler_state", "generator_state" или None
+    """
+    import torch
+    pt_path = os.path.join(history_dir, step_filename)
+    if not os.path.exists(pt_path):
+        return None
+    try:
+        data = torch.load(pt_path, map_location="cpu", weights_only=False)
+        # Проверяем, что это полный чекпоинт (не старый формат)
+        if "latents" not in data:
+            return None
+        return data
+    except Exception as e:
+        print(f"[CheckpointManager] Ошибка загрузки {pt_path}: {e}")
+        return None
+
+
+def list_steps_in_history(history_dir: str) -> list[dict]:
+    """
+    Возвращает список шагов в папке истории (отсортированных по номеру).
+    Args:
+        history_dir: путь к папке истории
+    Returns:
+        list[dict]: [{"step": int, "pt_file": str, "json_file": str}, ...]
+    """
+    steps = []
+    if not os.path.exists(history_dir):
+        return steps
+    for filename in os.listdir(history_dir):
+        if filename.startswith("step_") and filename.endswith(".pt"):
+            step_num = int(filename.replace("step_", "").replace(".pt", ""))
+            json_file = filename.replace(".pt", ".json")
+            steps.append({
+                "step": step_num,
+                "pt_file": filename,
+                "json_file": json_file
+            })
+    return sorted(steps, key=lambda x: x["step"])

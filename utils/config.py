@@ -121,3 +121,8 @@ class Config:
         """Папка для подготовленных изображений"""
         import os
         return os.path.join(self.get_data_dir(), "init_images")
+    
+    def get_models_registry_path(self):
+        """Путь к файлу реестра моделей"""
+        import os
+        return os.path.join(self.get_data_dir(), "models_registry.json")

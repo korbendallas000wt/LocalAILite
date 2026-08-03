@@ -42,17 +42,19 @@ class ResourceMonitor:
             dict: {"ok": bool, "available_gb": float, "required_gb": float, "message": str}
         """
         limits = self.get_limits()
-        sys_info = self.get_system_info()
-        
-        # Максимум RAM, который может использовать приложение
-        max_ram_gb = sys_info["ram_total_gb"] * limits["max_ram_percent"] / 100
-        
-        # Уже занято приложением (примерно)
-        current_process = psutil.Process()
-        app_used_gb = current_process.memory_info().rss / (1024**3)
-        
-        # Свободно для новой задачи
-        available_for_task = max_ram_gb - app_used_gb
+        # Реальная память системы (учитываем ВСЕ процессы, а не только GUI)
+        mem = psutil.virtual_memory()
+        total_gb = mem.total / (1024**3)
+        available_gb = mem.available / (1024**3)
+        # Фактически занято системой (все процессы, без отдаваемого кэша)
+        used_gb = total_gb - available_gb
+        # Пользовательский потолок: сколько всего RAM может быть занято
+        max_used_gb = total_gb * limits["max_ram_percent"] / 100
+        # Запас до пользовательского потолка
+        headroom_to_limit_gb = max_used_gb - used_gb
+        # Реально свободно для задачи: минимум из (свободно в системе, запас до лимита),
+        # с запасом 10% на непредвиденные расходы
+        available_for_task = max(0.0, min(available_gb, headroom_to_limit_gb) * 0.9)
         
         if required_gb > available_for_task:
             return {
@@ -63,7 +65,7 @@ class ResourceMonitor:
                     f"Недостаточно RAM. "
                     f"Требуется: {required_gb:.1f} GB, "
                     f"доступно: {available_for_task:.1f} GB "
-                    f"(лимит {limits['max_ram_percent']}% от {sys_info['ram_total_gb']:.1f} GB)"
+                    f"(свободно в системе: {available_gb:.1f} GB, лимит {limits['max_ram_percent']}% от {total_gb:.1f} GB)"
                 )
             }
         
@@ -77,23 +79,20 @@ class ResourceMonitor:
     def estimate_diffusers_ram(self, width: int, height: int, model: str) -> float:
         """
         Оценивает требуемую RAM для Diffusers.
-        SDXL: ~6-8 GB для 1024x1024
-        SD 1.5: ~4 GB для 512x512
+        SDXL: ~9 GB для 512x512, ~11 GB для 1024x1024 (float32 на CPU)
+        SD 1.5: ~4.5 GB для 512x512
         """
         # Базовая оценка по размеру изображения
         pixels = width * height
-        base_gb = 4.0  # базовое потребление
-        
-        # SDXL требует больше
+        base_gb = 4.5  # базовое потребление (SD 1.5)
+        # SDXL требует больше (модель ~7 GB в float32 + активация + оверхед torch)
         if "xl" in model.lower() or pixels > 512*512:
-            base_gb = 6.0
-        
+            base_gb = 9.0
         # Масштабирование по размеру
-        if pixels > 1024*1024:
-            base_gb *= 1.3
+        if pixels >= 1024*1024:
+            base_gb *= 1.2
         elif pixels < 512*512:
-            base_gb *= 0.7
-        
+            base_gb *= 0.85
         return base_gb
     
     def estimate_ollama_ram(self, model: str) -> float:
@@ -153,3 +152,47 @@ class ResourceMonitor:
             "VECLIB_MAXIMUM_THREADS": str(cores),
             "NUMEXPR_NUM_THREADS": str(cores)
         }
+
+    @staticmethod
+    def read_pid_file(pid_path: str) -> int:
+        """Читает PID из файла. Возвращает 0, если файла нет или он битый."""
+        try:
+            if not os.path.exists(pid_path):
+                return 0
+            with open(pid_path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+            return int(content) if content else 0
+        except Exception:
+            return 0
+
+    @staticmethod
+    def is_process_alive(pid: int) -> bool:
+        """Проверяет, жив ли процесс с указанным PID"""
+        if pid <= 0:
+            return False
+        try:
+            return psutil.pid_exists(pid)
+        except Exception:
+            return False
+
+    @staticmethod
+    def kill_process_by_pid(pid: int, force: bool = False) -> bool:
+        """Останавливает процесс по PID. force=True — сразу SIGKILL."""
+        if pid <= 0:
+            return False
+        try:
+            process = psutil.Process(pid)
+            if force:
+                process.kill()
+            else:
+                process.terminate()
+            try:
+                process.wait(timeout=3)
+            except Exception:
+                pass
+            return True
+        except psutil.NoSuchProcess:
+            return True
+        except Exception as e:
+            print(f"[ResourceMonitor] Не удалось завершить процесс {pid}: {e}")
+            return False

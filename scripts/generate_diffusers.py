@@ -63,7 +63,9 @@ def main():
     parser.add_argument("--no-safety-checker", action="store_true")
     
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--checkpoint_file", default=None)
+    parser.add_argument("--resume-history-dir", default=None)
+    parser.add_argument("--resume-step-file", default=None)
+    parser.add_argument("--resume-start-step", type=int, default=0)
     
     args = parser.parse_args()
 
@@ -118,19 +120,34 @@ def main():
     # Resume logic
     start_step = 0
     latents = None
-    if args.resume and args.checkpoint_file:
-        print(f"[INFO] Resuming from checkpoint: {args.checkpoint_file}", flush=True)
-        json_data, torch_data = checkpoint_manager.load_archived_checkpoint(args.checkpoint_file)
-        if json_data and torch_data:
-            start_step = json_data.get("current_step", 0)
-            latents = torch_data["latents"].to(args.device)
-            generator.set_state(torch_data["generator_state"])
+    resume_timesteps = None  # Оставшиеся timestep'ы из чекпоинта
+
+    if args.resume and args.resume_history_dir and args.resume_step_file:
+        print(f"[INFO] Resuming from history: {args.resume_history_dir}/{args.resume_step_file}", flush=True)
+        checkpoint_data = checkpoint_manager.load_step_full(args.resume_history_dir, args.resume_step_file)
+        if checkpoint_data is not None:
+            latents = checkpoint_data["latents"].to(args.device)
+            start_step = args.resume_start_step
+            
+            # Восстанавливаем scheduler state
+            if "scheduler_state" in checkpoint_data:
+                pipe.scheduler.__dict__.update(checkpoint_data["scheduler_state"])
+                resume_timesteps = pipe.scheduler.timesteps[start_step:]
+                print(f"[INFO] Scheduler state restored, timesteps: {len(resume_timesteps)}", flush=True)
+            
+            # Восстанавливаем generator state
+            if "generator_state" in checkpoint_data:
+                generator.set_state(checkpoint_data["generator_state"])
+                print(f"[INFO] Generator state restored", flush=True)
+            
             print(f"[INFO] Resumed at step {start_step}", flush=True)
+        else:
+            print(f"[ERROR] Failed to load checkpoint from {args.resume_step_file}", flush=True)
 
     # Callback для diffusers 0.39+
     def callback_on_step_end(pipe, step, timestep, callback_kwargs):
         latents = callback_kwargs["latents"]
-        step_number = step + 1
+        step_number = step + 1 + start_step
         
         # Сохраняем ТОЛЬКО латенты (.pt) и метаданные (.json) для истории
         # Декодирование в PNG здесь НЕ делаем, чтобы не тормозить генерацию!
@@ -138,17 +155,31 @@ def main():
         pt_path = os.path.join(args.history_dir, f"step_{step_number:04d}.pt")
         json_path = os.path.join(args.history_dir, f"step_{step_number:04d}.json")
         
-        # 1. Сохраняем PT (быстрая операция, просто дамп тензора)
-        torch.save({"latents": latents.cpu()}, pt_path)
+        # 1. Сохраняем PT (латенты + scheduler state + generator state)
+        torch.save({
+            "latents": latents.cpu(),
+            "scheduler_state": {k: v for k, v in pipe.scheduler.__dict__.items()
+                               if not callable(v)},
+            "generator_state": generator.get_state()
+        }, pt_path)
         
-        # 2. Сохраняем JSON
+        # 2. Сохраняем JSON со ВСЕМИ параметрами генерации
         meta = {
             "step": step_number, 
             "timestep": int(timestep.item() if hasattr(timestep, 'item') else timestep),
-            "seed": actual_seed
+            "seed": actual_seed,
+            "prompt": args.prompt,
+            "negative_prompt": args.negative_prompt,
+            "model": os.path.basename(args.model),
+            "scheduler": args.scheduler,
+            "steps": args.steps,
+            "cfg": args.cfg,
+            "size": f"{args.width}x{args.height}",
+            "width": args.width,
+            "height": args.height
         }
-        with open(json_path, "w") as f:
-            json.dump(meta, f)
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2, ensure_ascii=False)
             
         # Выводим прогресс для UI (без пути к картинке, так как её ещё нет)
         progress_json = json.dumps({
@@ -163,41 +194,72 @@ def main():
 
 
     # Генерация
-    print(f"[INFO] Starting generation: {args.steps} steps, seed={actual_seed}", flush=True)
-    result = pipe(
-        prompt=args.prompt,
-        negative_prompt=args.negative_prompt,
-        num_inference_steps=args.steps,
-        guidance_scale=args.cfg,
-        width=args.width,
-        height=args.height,
-        generator=generator,
-        latents=latents,
-        callback_on_step_end=callback_on_step_end,
-        callback_on_step_end_tensor_inputs=["latents"],
-        output_type="pil"
-    )
+    # Проверяем, поддерживает ли scheduler custom timesteps
+    # Стохастические scheduler'ы (EulerAncestral, LMS) НЕ поддерживают
+    scheduler_name = pipe.scheduler.__class__.__name__
+    supports_custom_timesteps = scheduler_name not in [
+        'EulerAncestralDiscreteScheduler',
+        'LMSDiscreteScheduler'
+    ]
+
+    if args.resume and resume_timesteps is not None and supports_custom_timesteps:
+        # Точный resume: используем оставшиеся timestep'ы из чекпоинта
+        print(f"[INFO] Starting generation: {len(resume_timesteps)} remaining steps (resume from {start_step}), seed={actual_seed}", flush=True)
+        
+        # === ВАЖНО: компенсируем масштабирование латентов в prepare_latents ===
+        # Конвейер умножает ВСЕ латенты на init_noise_sigma (строка 726 в pipeline).
+        # Для свежей генерации это правильно (масштабирует случайный шум).
+        # Для resume — катастрофа (латенты уже на правильном уровне из чекпоинта).
+        # Решение: предварительно делим на init_noise_sigma, чтобы конвейерное
+        # умножение скомпенсировалось.
+        # Нюанс: init_noise_sigma берём для УКОРОЧЕННОГО расписания (resume_timesteps),
+        # поэтому сначала настраиваем scheduler на эти timesteps.
+        pipe.scheduler.set_timesteps(timesteps=resume_timesteps)
+        init_sigma = pipe.scheduler.init_noise_sigma
+        latents = latents / init_sigma
+        print(f"[INFO] Latents pre-scaled by 1/init_noise_sigma={init_sigma:.4f} to compensate for pipeline scaling", flush=True)
+        
+        result = pipe(
+            prompt=args.prompt,
+            negative_prompt=args.negative_prompt,
+            timesteps=resume_timesteps,
+            guidance_scale=args.cfg,
+            width=args.width,
+            height=args.height,
+            generator=generator,
+            latents=latents,
+            callback_on_step_end=callback_on_step_end,
+            callback_on_step_end_tensor_inputs=["latents"],
+            output_type="pil"
+        )
+    else:
+        # Обычная генерация или fallback для стохастических scheduler'ов
+        remaining_steps = args.steps - start_step if args.resume and start_step > 0 else args.steps
+        print(f"[INFO] Starting generation: {remaining_steps} steps, seed={actual_seed}", flush=True)
+        result = pipe(
+            prompt=args.prompt,
+            negative_prompt=args.negative_prompt,
+            num_inference_steps=remaining_steps,
+            guidance_scale=args.cfg,
+            width=args.width,
+            height=args.height,
+            generator=generator,
+            latents=latents,
+            callback_on_step_end=callback_on_step_end,
+            callback_on_step_end_tensor_inputs=["latents"],
+            output_type="pil"
+        )
 
     # Финальное сохранение
     final_image = result.images[0]
     final_path = os.path.join(args.output_dir, f"sdxl_{actual_seed}.png")
+    counter = 1
+    while os.path.exists(final_path):
+        final_path = os.path.join(args.output_dir, f"sdxl_{actual_seed}_{counter}.png")
+        counter += 1
     final_image.save(final_path)
-    
-    # Сохраняем метаданные генерации
-    metadata = {
-        "prompt": args.prompt,
-        "negative_prompt": args.negative_prompt,
-        "steps": args.steps,
-        "cfg": args.cfg,
-        "size": f"{args.width}x{args.height}",
-        "seed": actual_seed,
-        "scheduler": args.scheduler,
-        "model": os.path.basename(args.model)
-    }
-    meta_path = os.path.join(args.output_dir, "metadata.json")
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2, ensure_ascii=False)
-    
+
+
     # === Явная выгрузка модели для быстрого освобождения ресурсов ===
     print("[INFO] Unloading model...", flush=True)
     del pipe
