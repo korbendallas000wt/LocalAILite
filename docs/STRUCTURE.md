@@ -17,7 +17,8 @@
     │   ├── CHANGELOG.md                     # История версий
     │   ├── PROJECT_MANIFEST.md              # Контракты и архитектура
     │   ├── STRUCTURE.md                     # Этот файл
-    │   └── ROADMAP.md                       # План развития
+    │   ├── PHILOSOPHY.md                    # Философия проекта
+│   └── ROADMAP.md                       # План развития
     │
     ├── core/                                # Ядро (логика без UI)
     │   ├── chat_manager.py                  # История чата (messages list)
