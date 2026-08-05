@@ -153,10 +153,6 @@ class OllamaManager(QObject):
         env.insert("OLLAMA_MODELS", models_path)
         env.insert("OLLAMA_HOST", "127.0.0.1:11434")
         
-        # Данные Ollama (ключи, история) — в data/ollama/
-        ollama_data_dir = self.config.get_ollama_data_dir()
-        os.makedirs(ollama_data_dir, exist_ok=True)
-        env.insert("OLLAMA_DATA_DIR", ollama_data_dir)
         
         # Библиотеки (CUDA, ROCm) — в bin/ollama/lib/ollama/
         lib_dir = self.config.get_ollama_lib_dir()

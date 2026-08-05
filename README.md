@@ -72,7 +72,6 @@
 
 | Модуль | Версия | Роль |
 |--------|--------|------|
-| utils/config.py | v1.1.0 | QSettings-обёртка + пути (data/, bin/ollama/, history/, init_images/) |
 | get_context.sh | v1.2.1 | Точечная выгрузка файлов проекта для LLM (вместо полного full_context.py) |
 
 ---
@@ -132,14 +131,10 @@ LocalAILite/
 ├── utils/
 │   └── config.py                        # QSettings-обёртка
 │
-├── bin/ollama/                          # Локальные бинарники Ollama (в gitignore)
 └── data/                                # Рабочие данные (в gitignore)
-    ├── cache/                           # Кэш моделей HuggingFace
-    ├── checkpoints/                     # Архивные чекпоинты
     ├── history/                         # История генерации: {timestamp}/step_NNNN.{png,pt,json}
     ├── init_images/                     # Подготовленные изображения для img2img
     ├── logs/                            # Логи
-    ├── ollama/                          # Данные Ollama
     ├── pids/                            # PID-файлы
     └── previews/                        # Промежуточные PNG превью
 ```

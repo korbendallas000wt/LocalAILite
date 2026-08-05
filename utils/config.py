@@ -102,19 +102,22 @@ class Config:
 
     # === Ollama (локальный бинарник) ===
     def get_ollama_binary_path(self):
-        """Путь к локальному бинарнику Ollama"""
+        """Путь к локальному бинарнику Ollama (настраиваемый через QSettings)"""
         import os
-        return os.path.join(self.get_data_dir(), "..", "bin", "ollama", "bin", "ollama")
+        default = os.path.join(self.get_data_dir(), "..", "bin", "ollama", "bin", "ollama")
+        return self.get("ollama/binary_path", default)
     
-    def get_ollama_data_dir(self):
-        """Папка для данных Ollama (ключи, история)"""
-        import os
-        return os.path.join(self.get_data_dir(), "ollama")
+    def set_ollama_binary_path(self, path):
+        self.set("ollama/binary_path", path)
     
     def get_ollama_lib_dir(self):
-        """Папка с библиотеками Ollama (CUDA, ROCm)"""
+        """Папка с библиотеками Ollama (CUDA, ROCm), настраиваемая через QSettings"""
         import os
-        return os.path.join(self.get_data_dir(), "..", "bin", "ollama", "lib", "ollama")
+        default = os.path.join(self.get_data_dir(), "..", "bin", "ollama", "lib", "ollama")
+        return self.get("ollama/lib_path", default)
+    
+    def set_ollama_lib_dir(self, path):
+        self.set("ollama/lib_path", path)
 
     # === Image Prep ===
     def get_init_images_dir(self):
