@@ -74,6 +74,18 @@
 |--------|--------|------|
 | get_context.sh | v1.2.1 | Точечная выгрузка файлов проекта для LLM (вместо полного full_context.py) |
 
+### Инсталлятор (installer/)
+
+| Модуль | Версия | Роль |
+|--------|--------|------|
+| installer/cli.py | v1.3.0 | Точка входа бутстрапа: `python3 installer/cli.py`. Идемпотентен, прогоняет шаги с прогрессом. |
+| installer/detector.py | v1.3.0 | Диагностика железа: ОС, CPU (sse4_2/popcnt/avx/avx2/fma), RAM, GPU, Python, диск. Методы `can_use_pip_pyqt6()`, `detect_system_pyqt6()`. |
+| installer/requirements.py | v1.3.0 | Пороги ресурсов (RAM, CPU, диск) для вердиктов советника. |
+| installer/advisor.py | v1.3.0 | Честные вердикты: что потянет машина (Python/Ollama/SDXL), подбор моделей под железо. |
+| installer/steps/base.py | v1.3.0 | Контракт идемпотентного шага установки (`InstallStep`, `StepStatus`). |
+| installer/steps/step_config.py | v1.3.0 | Создание служебной структуры `data/` (5 папок: history, init_images, logs, pids, previews). |
+| installer/steps/step_env.py | v1.3.0 | Создание venv с **гибридной стратегией PyQt6**: pip на современном CPU, системный из pacman на старом (без sse4_2/popcnt). |
+
 ---
 
 ## 📁 Структура проекта
@@ -131,6 +143,16 @@ LocalAILite/
 ├── utils/
 │   └── config.py                        # QSettings-обёртка
 │
+├── installer/                           # Инсталлятор (уровень 1 — бутстрап)
+│   ├── cli.py                           # Точка входа: python3 installer/cli.py
+│   ├── detector.py                      # Диагностика железа
+│   ├── requirements.py                  # Пороги ресурсов
+│   ├── advisor.py                       # Вердикты (Python/Ollama/SDXL)
+│   └── steps/                           # Идемпотентные шаги установки
+│       ├── base.py                      # Контракт шага
+│       ├── step_config.py               # Создание data/
+│       └── step_env.py                  # venv + гибридная стратегия PyQt6
+│
 └── data/                                # Рабочие данные (в gitignore)
     ├── history/                         # История генерации: {timestamp}/step_NNNN.{png,pt,json}
     ├── init_images/                     # Подготовленные изображения для img2img
@@ -142,6 +164,20 @@ LocalAILite/
 ---
 
 ## 🛠️ Запуск
+
+### Установка через инсталлятор
+
+```
+python3 installer/cli.py
+```
+
+Инсталлятор (уровень 1 — бутстрап) автоматически:
+- Детектирует железо и честно скажет, что потянет машина
+- Создаст служебную структуру `data/`
+- Создаст venv и установит зависимости (PyQt6, requests, psutil)
+- На старом CPU (без sse4_2/popcnt) использует системный PyQt6 из pacman вместо pip
+
+Идемпотентен: повторный запуск пропустит уже установленное.
 
 ### Зависимости
 
@@ -170,6 +206,7 @@ python main.py
 
 ## 📊 Ключевые возможности
 
+- **Инсталлятор**: детекция железа, идемпотентная установка, гибридная стратегия PyQt6 (pip/system) — `python3 installer/cli.py`
 - **Три режима работы**: чат с Ollama + генерация изображений SDXL + визуальный редактор
 - **Модульная архитектура**: SRP, сигнальная маршрутизация, изолированные потоки
 - **Управление ресурсами**: 2 арендатора (Ollama, Diffusers), только один генерирует одновременно

@@ -64,6 +64,18 @@
 | utils/config.py | v1.1.0 | QSettings-обёртка с методами для Ollama, Diffusers, путей, истории, init_images. Миграция из старой версии OllamaChat. |
 | get_context.sh | v1.2.1 | Точечная выгрузка файлов проекта для LLM (вместо полного full_context.py). |
 
+### Инсталлятор (installer/)
+
+| Модуль | Версия | Роль |
+|--------|--------|------|
+| installer/cli.py | v1.3.0 | Точка входа бутстрапа: `python3 installer/cli.py`. Последовательно прогоняет шаги установки с прогрессом в терминале. Идемпотентен. |
+| installer/detector.py | v1.3.0 | Диагностика железа: ОС, CPU (флаги sse4_2/popcnt/avx/avx2/fma), RAM, GPU, Python (pyenv/системный), диск. Методы `can_use_pip_pyqt6()`, `detect_system_pyqt6()` для определения стратегии установки Qt. |
+| installer/requirements.py | v1.3.0 | Пороги ресурсов (RAM, CPU, диск) для вердиктов советника. |
+| installer/advisor.py | v1.3.0 | Честные вердикты: что потянет машина (Python/Ollama/SDXL), подбор моделей под железо, предупреждения. |
+| installer/steps/base.py | v1.3.0 | Контракт идемпотентного шага установки (`InstallStep`, `StepStatus`): `is_installed() → install() → verify()`. |
+| installer/steps/step_config.py | v1.3.0 | Создание служебной структуры `data/` (5 папок: history, init_images, logs, pids, previews). |
+| installer/steps/step_env.py | v1.3.0 | Создание venv с **гибридной стратегией PyQt6**: pip на современном CPU (sse4_2+popcnt), системный из pacman на старом (без sse4_2/popcnt) через `--system-site-packages`. |
+
 ---
 
 ## ПРИНЦИПЫ АРХИТЕКТУРЫ
@@ -91,8 +103,8 @@
 
 ### Данные
 - Все настройки хранятся в QSettings через utils/config.py
-- Чекпоинты: data/checkpoints/checkpoint.json (метаданные) + checkpoint.pt (latents, scheduler, generator)
-- Архивные чекпоинты: data/checkpoints/YYYY-MM-DD_HH-MM-SS.json/.pt
+- Чекпоинты: data/history/{timestamp}/step_NNNN.json (метаданные) + step_NNNN.pt (latents, scheduler, generator)
+- Архивные чекпоинты: data/history/{timestamp}/step_NNNN.{pt,json}
 - История генерации: data/history/{timestamp}/step_NNNN.pt + step_NNNN.json + metadata.json
 - Логи: data/logs/diffusers_*.log, data/logs/ollama.log
 - PID-файлы: data/pids/ollama.pid, data/pids/diffusers.pid
@@ -162,12 +174,9 @@
 - Утилиты: utils/config.py, get_context.sh
 
 ### Данные (в gitignore)
-- data/cache/ — кэш моделей HuggingFace
-- data/checkpoints/ — чекпоинты (checkpoint.json/.pt + архив)
 - data/history/ — история генерации: {timestamp}/step_NNNN.{pt,json} + metadata.json
 - data/init_images/ — подготовленные изображения для img2img
 - data/logs/ — логи diffusers_*.log и ollama.log
-- data/ollama/ — данные Ollama (ключи, история)
 - data/pids/ — PID-файлы (ollama.pid, diffusers.pid)
 - data/previews/ — промежуточные PNG превью шагов (технические)
 
@@ -193,6 +202,8 @@
   - image_prep/preset — индекс пресета разрешения
   - image_prep/crop_mode — режим обрезки (center/letterbox/stretch)
   - image_prep/last_path — последний путь к изображению
+- ollama/binary_path — путь к бинарнику Ollama (дефолт: {project}/bin/ollama/bin/ollama)
+- ollama/lib_path — путь к библиотекам Ollama (дефолт: {project}/bin/ollama/lib/ollama)
   - temperature, top_p, max_tokens, timeout, stream, system_prompt, model — настройки Ollama
 
 ---

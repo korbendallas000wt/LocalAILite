@@ -63,20 +63,26 @@
     │       └── image_prep_panel.py          # Правая панель Visual editor (пресет, crop mode)
     │
     ├── utils/
-    │   └── config.py                        # QSettings-обёртка + пути (data/, bin/ollama/, history/, previews/)
+    │   └── config.py                        # QSettings-обёртка + пути (data/, bin/ollama/, Ollama)
+    │
+    ├── installer/                           # Инсталлятор (уровень 1 — бутстрап)
+    │   ├── cli.py                           # Точка входа: python3 installer/cli.py
+    │   ├── detector.py                      # Диагностика железа (ОС, CPU, RAM, GPU, Python, диск)
+    │   ├── requirements.py                  # Пороги ресурсов
+    │   ├── advisor.py                       # Вердикты (Python/Ollama/SDXL), подбор моделей
+    │   └── steps/                           # Идемпотентные шаги установки
+    │       ├── base.py                      # Контракт шага (InstallStep, StepStatus)
+    │       ├── step_config.py               # Создание data/ (5 служебных папок)
+    │       └── step_env.py                  # venv + гибридная стратегия PyQt6
     │
     ├── Repo/                                # Git-репозиторий (GitHub)
     │   ├── README.md                        # README для GitHub
     │   └── docs/                            # Копия docs/ для merge_docs.py
     │
-    ├── bin/ollama/                          # Локальные бинарники Ollama + CUDA/Vulkan libs (в gitignore)
     └── data/                                # Рабочие данные (в gitignore)
-        ├── cache/                           # Кэш моделей HuggingFace
-        ├── checkpoints/                     # Архивные чекпоинты (YYYY-MM-DD_HH-MM-SS.json/.pt)
         ├── history/                         # История генерации: {timestamp}/step_NNNN.{pt,json} + metadata.json
         ├── init_images/                     # Подготовленные изображения для img2img
         ├── logs/                            # Логи diffusers_*.log и ollama.log
-        ├── ollama/                          # Данные Ollama (ключи, история)
         ├── pids/                            # PID-файлы (ollama.pid, diffusers.pid)
         └── previews/                        # Промежуточные PNG превью шагов (технические)
 

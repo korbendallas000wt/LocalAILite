@@ -3,6 +3,28 @@
 
 Формат: [Keep a Changelog](https://keepachangelog.com/) | Версионирование: [SemVer](https://semver.org/)
 
+## [1.3.0] — 2026-08-06
+### Добавлено
+- **Инсталлятор (уровень 1 — бутстрап)** — новый модуль `installer/`:
+  - `detector.py` — диагностика ОС, CPU (sse4_2, popcnt, avx, avx2, fma), RAM, GPU, Python, диск. Методы `can_use_pip_pyqt6()`, `detect_system_pyqt6()` для определения стратегии установки Qt
+  - `requirements.py` — пороги ресурсов (RAM, CPU, диск)
+  - `advisor.py` — честные вердикты, что потянет машина (Python/Ollama/SDXL), подбор моделей под железо
+  - `steps/base.py` — контракт идемпотентного шага установки (`InstallStep`, `StepStatus`)
+  - `steps/step_config.py` — создание служебной структуры `data/` (5 папок: history, init_images, logs, pids, previews)
+  - `steps/step_env.py` — создание venv с **гибридной стратегией PyQt6**: pip на современном CPU (sse4_2+popcnt), системный из pacman на старом (без sse4_2/popcnt) через `--system-site-packages`
+  - `cli.py` — точка входа бутстрапа (`python3 installer/cli.py`), последовательно прогоняет шаги с прогрессом
+### Изменено
+- `utils/config.py` — пути бинарника/библиотек Ollama настраиваемые через QSettings (`ollama/binary_path`, `ollama/lib_path`), убран `get_ollama_data_dir()`
+- `core/ollama_manager.py` — убрана неиспользуемая переменная `OLLAMA_DATA_DIR` (Ollama её игнорировал, данные шли в `~/.ollama`)
+- `data/` — ревизия структуры: удалены неиспользуемые папки `cache/`, `checkpoints/`, `ollama/`
+### Архитектура
+- **Принцип «не навязываем, но помогаем максимально»** — детектор честно говорит, что потянет машина, и предлагает лучший путь установки
+- **Идемпотентность** — повторный запуск инсталлера пропускает уже установленное
+- **Гибридная стратегия PyQt6** — обход несовместимости pip-PyQt6 на старых CPU (без sse4_2/popcnt) через системный пакет из pacman
+- Проверено на Xeon E5450 без AVX2/SSE4.2 — самом сложном тестовом железе
+
+
+
 ## [1.2.1] — 2026-08-03
 
 ### Добавлено
