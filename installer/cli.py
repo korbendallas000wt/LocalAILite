@@ -102,6 +102,34 @@ def main():
     icon = "✅" if result.ok else ("⏭" if result.skipped else "❌")
     print(f"  {icon} {result.message}")
 
+    # 4.5. Запись флагов компонентов в QSettings (через venv python)
+    print_step("Шаг 4: Запись флагов компонентов")
+    try:
+        import subprocess
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        venv_python = os.path.join(project_root, "venv", "bin", "python")
+        if os.path.exists(venv_python):
+            ollama_flag = str(verdict["ollama"]["supported"])
+            sdxl_flag = str(verdict["sdxl"]["supported"])
+            result_flags = subprocess.run(
+                [venv_python, "-c",
+                 "import sys; from utils.config import Config; c = Config(); "
+                 "c.set_feature('ollama', sys.argv[1]=='True'); "
+                 "c.set_feature('sdxl', sys.argv[2]=='True'); "
+                 "c.set_feature('image_prep', True); "
+                 "print('Флаги записаны: ollama=' + sys.argv[1] + ', sdxl=' + sys.argv[2] + ', image_prep=True')",
+                 ollama_flag, sdxl_flag],
+                capture_output=True, text=True, cwd=project_root
+            )
+            if result_flags.returncode == 0:
+                print(f"  ✅ {result_flags.stdout.strip()}")
+            else:
+                print(f"  ⚠ Ошибка записи флагов: {result_flags.stderr.strip()}")
+        else:
+            print("  ⏭ venv не найден — флаги не записаны (дефолт: все True)")
+    except Exception as e:
+        print(f"  ⚠ Ошибка записи флагов: {e}")
+
     # 5. Итог
     print_header("Итог")
     if result.ok or result.skipped:

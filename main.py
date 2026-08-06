@@ -18,9 +18,9 @@ if __name__ == "__main__":
     # Создаём конфиг
     config = Config()
     
-    # Проверяем пути при старте
+    # Проверяем пути при старте (только установленные компоненты)
     validator = PathValidator()
-    result = validator.validate_all(config)
+    result = validator.validate_installed(config)
     
     window = MainWindow()
     

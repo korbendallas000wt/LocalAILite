@@ -123,3 +123,31 @@ class PathValidator:
         )
 
         return result
+
+    def validate_installed(self, config) -> dict:
+        """Проверка путей только для включённых компонентов (features/*).
+        Используется в усечённом приложении.
+        """
+        result = {}
+        all_valid = True
+
+        # Ollama
+        if config.get_feature("ollama", True):
+            result["ollama"] = self.validate_ollama_url(config.get_ollama_url())
+            if not result["ollama"]["valid"]:
+                all_valid = False
+
+        # SDXL / Diffusers
+        if config.get_feature("sdxl", True):
+            result["venv"] = self.validate_venv(config.get_sdxl_venv_path())
+            result["models"] = self.validate_models_path(config.get_sdxl_models_path())
+            result["output"] = self.validate_output_dir(config.get_sdxl_output_dir())
+            if not (result["venv"]["valid"] and result["models"]["valid"] and result["output"]["valid"]):
+                all_valid = False
+
+        # Image Prep — не требует обвязки, всегда OK
+        if config.get_feature("image_prep", True):
+            result["image_prep"] = {"valid": True, "error": ""}
+
+        result["all_valid"] = all_valid
+        return result
