@@ -129,3 +129,17 @@ class Config:
         """Путь к файлу реестра моделей"""
         import os
         return os.path.join(self.get_data_dir(), "models_registry.json")
+
+    # === Features (усечённое приложение) ===
+    def get_feature(self, feature_name: str, default: bool = True) -> bool:
+        """Возвращает флаг компонента (features/*)."""
+        value = self.get(f"features/{feature_name}", None)
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).lower() == "true"
+
+    def set_feature(self, feature_name: str, enabled: bool):
+        """Устанавливает флаг компонента (features/*)."""
+        self.set(f"features/{feature_name}", str(enabled).lower())

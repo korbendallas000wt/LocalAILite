@@ -25,7 +25,7 @@ class CleanupThread(QThread):
         self.step_started.emit("Остановка Diffusers...")
         try:
             # 1.1. Пытаемся остановить через worker (если существует)
-            if self.diffusers_tab.worker:
+            if self.diffusers_tab and self.diffusers_tab.worker:
                 if self.diffusers_tab.worker.process:
                     state = self.diffusers_tab.worker.process.state()
                     if state == QProcess.ProcessState.Running:
@@ -56,36 +56,40 @@ class CleanupThread(QThread):
         # === Шаг 2: Выгрузка модели Ollama (через API) ===
         self.step_started.emit("Выгрузка модели Ollama...")
         try:
-            # Останавливаем клиент, если работает
-            if self.ollama_tab.client and self.ollama_tab.client.isRunning():
-                self.ollama_tab.client.stop()
-                if not self.ollama_tab.client.wait(1000):
-                    self.ollama_tab.client.terminate()
-                    self.ollama_tab.client.wait(500)
-
-            # Выгружаем модель из Ollama (keep_alive=0)
-            import requests
-            model = self.ollama_tab.settings_panel.model_combo.currentText()
-            if model:
-                requests.post(
-                    f"{self.config.get_ollama_url()}/api/generate",
-                    json={"model": model, "keep_alive": 0},
-                    timeout=2
-                )
-
-            # Проверяем, что модель выгружена
-            res = requests.get(f"{self.config.get_ollama_url()}/api/ps", timeout=2)
-            if res.status_code == 200:
-                running_models = res.json().get('models', [])
-                if len(running_models) == 0:
-                    self.step_finished.emit(True, "Ollama: модель выгружена")
-                else:
-                    self.step_finished.emit(
-                        True,
-                        f"Ollama: моделей в памяти — {len(running_models)}"
-                    )
+            # Усечённое приложение: если таба Ollama нет — пропускаем
+            if not self.ollama_tab:
+                self.step_finished.emit(True, "Ollama: компонент не установлен (пропуск)")
             else:
-                self.step_finished.emit(True, "Ollama: модель выгружена")
+                # Останавливаем клиент, если работает
+                if self.ollama_tab.client and self.ollama_tab.client.isRunning():
+                    self.ollama_tab.client.stop()
+                    if not self.ollama_tab.client.wait(1000):
+                        self.ollama_tab.client.terminate()
+                        self.ollama_tab.client.wait(500)
+
+                # Выгружаем модель из Ollama (keep_alive=0)
+                import requests
+                model = self.ollama_tab.settings_panel.model_combo.currentText()
+                if model:
+                    requests.post(
+                        f"{self.config.get_ollama_url()}/api/generate",
+                        json={"model": model, "keep_alive": 0},
+                        timeout=2
+                    )
+
+                # Проверяем, что модель выгружена
+                res = requests.get(f"{self.config.get_ollama_url()}/api/ps", timeout=2)
+                if res.status_code == 200:
+                    running_models = res.json().get('models', [])
+                    if len(running_models) == 0:
+                        self.step_finished.emit(True, "Ollama: модель выгружена")
+                    else:
+                        self.step_finished.emit(
+                            True,
+                            f"Ollama: моделей в памяти — {len(running_models)}"
+                        )
+                else:
+                    self.step_finished.emit(True, "Ollama: модель выгружена")
         except Exception as e:
             self.step_finished.emit(False, f"Ошибка: {str(e)}")
         self.msleep(300)

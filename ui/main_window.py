@@ -28,15 +28,32 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs, 1)
         
-        self.ollama_tab = OllamaTab(self.config, self.resource_manager)
-        self.tabs.addTab(self.ollama_tab, "💬 Ollama Chat")
+        # === Условное создание табов по флагам features/* ===
+        self.ollama_tab = None
+        self.diffusers_tab = None
+        self.image_prep_tab = None
+
+        if self.config.get_feature("ollama", True):
+            self.ollama_tab = OllamaTab(self.config, self.resource_manager)
+            self.tabs.addTab(self.ollama_tab, "💬 Ollama Chat")
         
-        self.diffusers_tab = DiffusersTab(self.config, self.resource_manager)
-        self.tabs.addTab(self.diffusers_tab, "🎨 Diffusers")
+        if self.config.get_feature("sdxl", True):
+            self.diffusers_tab = DiffusersTab(self.config, self.resource_manager)
+            self.tabs.addTab(self.diffusers_tab, "🎨 Diffusers")
         
-        self.image_prep_tab = ImagePrepTab(self.config, self.resource_manager)
-        self.tabs.addTab(self.image_prep_tab, "Visual editor")
+        if self.config.get_feature("image_prep", True):
+            self.image_prep_tab = ImagePrepTab(self.config, self.resource_manager)
+            self.tabs.addTab(self.image_prep_tab, "Visual editor")
         
+        # Маппинг таб → имя модуля (для bar_state и on_tab_changed)
+        self._tab_names = {}
+        if self.ollama_tab:
+            self._tab_names[id(self.ollama_tab)] = "ollama"
+        if self.diffusers_tab:
+            self._tab_names[id(self.diffusers_tab)] = "diffusers"
+        if self.image_prep_tab:
+            self._tab_names[id(self.image_prep_tab)] = "image_prep"
+
         self.shared_bar = SharedBottomBar()
         main_layout.addWidget(self.shared_bar)
         
@@ -44,18 +61,23 @@ class MainWindow(QMainWindow):
         
         self.setCentralWidget(central_widget)
         
-        self.resource_manager.register_module("ollama", self.ollama_tab)
-        self.resource_manager.register_module("diffusers", self.diffusers_tab)
-        self.resource_manager.register_module("image_prep", self.image_prep_tab)
+        if self.ollama_tab:
+            self.resource_manager.register_module("ollama", self.ollama_tab)
+        if self.diffusers_tab:
+            self.resource_manager.register_module("diffusers", self.diffusers_tab)
+        if self.image_prep_tab:
+            self.resource_manager.register_module("image_prep", self.image_prep_tab)
         
-        # === Ollama Manager ===
-        self.ollama_manager = OllamaManager(self.config)
-        self.ollama_manager.started.connect(self._on_ollama_started)
-        self.ollama_manager.stopped.connect(self._on_ollama_stopped)
-        self.ollama_manager.error.connect(self._on_ollama_error)
-        self.ollama_manager.log_line.connect(self._on_ollama_log)
-        self.ollama_manager.needs_install.connect(self._on_ollama_needs_install)
-        self.ollama_manager.conflict_detected.connect(self._on_ollama_conflict)
+        # === Ollama Manager (только если features/ollama) ===
+        self.ollama_manager = None
+        if self.ollama_tab:
+            self.ollama_manager = OllamaManager(self.config)
+            self.ollama_manager.started.connect(self._on_ollama_started)
+            self.ollama_manager.stopped.connect(self._on_ollama_stopped)
+            self.ollama_manager.error.connect(self._on_ollama_error)
+            self.ollama_manager.log_line.connect(self._on_ollama_log)
+            self.ollama_manager.needs_install.connect(self._on_ollama_needs_install)
+            self.ollama_manager.conflict_detected.connect(self._on_ollama_conflict)
         
         # === Подключение сигналов ===
         self.tabs.currentChanged.connect(self._on_tab_changed)
@@ -67,30 +89,32 @@ class MainWindow(QMainWindow):
         self.shared_bar.blocked_action.connect(self._on_blocked_action)
         
         # Универсальные сигналы состояния от табов
-        self.ollama_tab.state_changed.connect(self._on_tab_state_changed)
-        self.diffusers_tab.state_changed.connect(self._on_tab_state_changed)
-        self.image_prep_tab.state_changed.connect(self._on_tab_state_changed)
+        if self.ollama_tab:
+            self.ollama_tab.state_changed.connect(self._on_tab_state_changed)
+        if self.diffusers_tab:
+            self.diffusers_tab.state_changed.connect(self._on_tab_state_changed)
+        if self.image_prep_tab:
+            self.image_prep_tab.state_changed.connect(self._on_tab_state_changed)
         
         self._create_menu()
         self._restore_bar_state()
         
         # Восстанавливаем состояние первого таба
         first_tab = self.tabs.widget(0)
-        if hasattr(first_tab, '_bar_state'):
+        if first_tab and hasattr(first_tab, '_bar_state'):
             state = first_tab._bar_state
             self.shared_bar.set_prompt(state["prompt"])
             self.shared_bar.set_progress(state["progress_current"], state["progress_total"])
             self.shared_bar.set_status(state["status"], state.get("status_color"))
-        if "elapsed_seconds" in state:
-            self.shared_bar.set_timer_display(state["elapsed_seconds"])
-        if "elapsed_seconds" in state:
-            self.shared_bar.set_timer_display(state["elapsed_seconds"])
+            if "elapsed_seconds" in state:
+                self.shared_bar.set_timer_display(state["elapsed_seconds"])
         
         self._update_status()
         
-        # Запускаем Ollama
+        # Запускаем Ollama (только если компонент установлен)
         from PyQt6.QtCore import QTimer
-        QTimer.singleShot(100, self.ollama_manager.start)
+        if self.ollama_manager:
+            QTimer.singleShot(100, self.ollama_manager.start)
     
     def _create_menu(self):
         menubar = self.menuBar()
@@ -131,17 +155,17 @@ class MainWindow(QMainWindow):
     
     def _update_status(self):
         validator = PathValidator()
-        result = validator.validate_all(self.config)
+        result = validator.validate_installed(self.config)
         
         if not result["all_valid"]:
             errors = []
-            if not result["venv"]["valid"]:
+            if "venv" in result and not result["venv"]["valid"]:
                 errors.append("venv")
-            if not result["models"]["valid"]:
+            if "models" in result and not result["models"]["valid"]:
                 errors.append("модели")
-            if not result["output"]["valid"]:
+            if "output" in result and not result["output"]["valid"]:
                 errors.append("папка сохранения")
-            if not result["ollama"]["valid"]:
+            if "ollama" in result and not result["ollama"]["valid"]:
                 errors.append("Ollama")
             self._set_active_tab_status(f"⚠ Настройте пути: {', '.join(errors)}", "orange")
         else:
@@ -153,10 +177,11 @@ class MainWindow(QMainWindow):
         
         # Переключение табов свободно, блокировка только на кнопке запуска
         prev_tab = self.tabs.widget(self._prev_index)
-        if hasattr(prev_tab, '_bar_state'):
+        if prev_tab and hasattr(prev_tab, '_bar_state'):
             prev_tab._bar_state["prompt"] = self.shared_bar.get_prompt()
         
-        self.resource_manager.on_tab_changed(index)
+        tab_name = self._tab_names.get(id(active_tab), "")
+        self.resource_manager.on_tab_changed(tab_name)
         
         active_tab = self.tabs.currentWidget()
         if hasattr(active_tab, '_bar_state'):
@@ -228,8 +253,13 @@ class MainWindow(QMainWindow):
         owner = self.resource_manager.get_resource_owner()
         active_tab = self.tabs.currentWidget()
         
-        # Определяем индекс вкладки-владельца
-        owner_index = 0 if owner == "ollama" else 1 if owner == "diffusers" else -1
+        # Динамический поиск индекса вкладки-владельца по имени модуля
+        owner_index = -1
+        for i in range(self.tabs.count()):
+            tab = self.tabs.widget(i)
+            if self._tab_names.get(id(tab)) == owner:
+                owner_index = i
+                break
         
         if owner_index >= 0 and self.tabs.currentIndex() != owner_index:
             # Переключаем на целевую вкладку
@@ -246,7 +276,7 @@ class MainWindow(QMainWindow):
         for i in range(self.tabs.count()):
             tab = self.tabs.widget(i)
             if hasattr(tab, '_bar_state'):
-                tab_name = ["ollama", "diffusers", "image_prep"][i] if i < 3 else f"tab_{i}"
+                tab_name = self._tab_names.get(id(tab), f"tab_{i}")
                 saved_state = self.config.get_json(f"bar_state/{tab_name}")
                 if saved_state:
                     for key in tab._bar_state.keys():
@@ -261,7 +291,7 @@ class MainWindow(QMainWindow):
         for i in range(self.tabs.count()):
             tab = self.tabs.widget(i)
             if hasattr(tab, '_bar_state'):
-                tab_name = ["ollama", "diffusers", "image_prep"][i] if i < 3 else f"tab_{i}"
+                tab_name = self._tab_names.get(id(tab), f"tab_{i}")
                 self.config.set_json(f"bar_state/{tab_name}", tab._bar_state)
     
     # === Ollama Manager handlers ===

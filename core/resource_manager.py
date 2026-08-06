@@ -26,19 +26,27 @@ class ResourceManager(QObject):
         """Регистрирует модуль для управления ресурсами"""
         self.modules[name] = module
     
-    def on_tab_changed(self, index):
-        """Вызывается при переключении таба — выгружает неактивные модули"""
-        module_names = list(self.modules.keys())
-        if 0 <= index < len(module_names):
-            module_name = module_names[index]
-            if self.active_module and self.active_module != module_name:
-                # Выгружаем предыдущий модуль
-                prev_module = self.modules.get(self.active_module)
-                if prev_module and hasattr(prev_module, 'unload'):
-                    print(f"Выгрузка модуля: {self.active_module}")
-                    prev_module.unload()
-            self.active_module = module_name
-            print(f"Активный модуль: {self.active_module}")
+    def on_tab_changed(self, module_name_or_index):
+        """Вызывается при переключении таба.
+        Принимает имя модуля (str) или индекс (int) для обратной совместимости.
+        """
+        if isinstance(module_name_or_index, int):
+            # Обратная совместимость: индекс → имя по порядку регистрации
+            module_names = list(self.modules.keys())
+            if 0 <= module_name_or_index < len(module_names):
+                module_name = module_names[module_name_or_index]
+            else:
+                return
+        else:
+            module_name = module_name_or_index
+
+        if self.active_module and self.active_module != module_name:
+            prev_module = self.modules.get(self.active_module)
+            if prev_module and hasattr(prev_module, 'unload'):
+                print(f"Выгрузка модуля: {self.active_module}")
+                prev_module.unload()
+        self.active_module = module_name
+        print(f"Активный модуль: {self.active_module}")
     
     # === Управление ресурсом (генерация) ===
     
