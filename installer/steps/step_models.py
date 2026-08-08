@@ -1,0 +1,408 @@
+"""
+installer/steps/step_models.py — шаг скачивания моделей (уровень 2).
+
+Скачивает модели Ollama (через ollama pull) и SDXL (через huggingface_hub).
+Использует рекомендации из advisor.recommend_models().
+
+Идемпотентен: если модели уже есть — пропускает.
+Чистый Python, БЕЗ PyQt — работает в CLI-бутстрапе и в UI-визарде.
+"""
+
+import os
+import subprocess
+import shutil
+
+try:
+    from installer.steps.base import InstallStep, StepStatus
+except ImportError:
+    from steps.base import InstallStep, StepStatus
+
+
+class StepModels(InstallStep):
+    """Скачивание моделей Ollama и SDXL."""
+
+    id = "models"
+    name = "Скачивание моделей"
+    description = "Скачивание моделей Ollama и SDXL (рекомендованные советником)"
+
+    def __init__(self, base_dir: str = None, ollama_model: str = None, sdxl_model: str = None):
+        if base_dir is None:
+            base_dir = self._find_project_root()
+        self.base_dir = base_dir
+        self.venv_python = os.path.join(base_dir, "venv", "bin", "python")
+        # Модели для скачивания (None = рекомендованные из advisor)
+        self.ollama_model = ollama_model
+        self.sdxl_model = sdxl_model
+        # Детектор и советник
+        try:
+            from installer.detector import HardwareDetector
+            from installer.advisor import Advisor
+        except ImportError:
+            from detector import HardwareDetector
+            from advisor import Advisor
+        self.detector = HardwareDetector()
+        self.advisor = Advisor(self.detector)
+
+    def _find_project_root(self) -> str:
+        """Ищем корень проекта (где main.py)."""
+        cur = os.path.dirname(os.path.abspath(__file__))
+        for _ in range(5):
+            if os.path.exists(os.path.join(cur, "main.py")):
+                return cur
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+        return os.getcwd()
+
+    def _read_config_value(self, key: str, default: str = "") -> str:
+        """Читает значение из QSettings через venv python."""
+        if not os.path.exists(self.venv_python):
+            return default
+        try:
+            result = subprocess.run(
+                [self.venv_python, "-c",
+                 f"from utils.config import Config; c = Config(); print(c.get('{key}', '{default}') or '{default}')"],
+                capture_output=True, text=True, timeout=10, cwd=self.base_dir
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:
+            pass
+        return default
+
+    def _get_feature(self, feature_name: str) -> bool:
+        """Читает флаг features/* из QSettings."""
+        value = self._read_config_value(f"features/{feature_name}", "true")
+        return value.lower() == "true"
+
+    def _find_ollama_binary(self) -> str:
+        """Находит бинарник Ollama."""
+        # 1. Из Config
+        binary_path = self._read_config_value("ollama/binary_path", "")
+        if binary_path and os.path.exists(binary_path) and os.access(binary_path, os.X_OK):
+            return binary_path
+        # 2. Локальный (в проекте)
+        local_bin = os.path.join(self.base_dir, "bin", "ollama", "bin", "ollama")
+        if os.path.exists(local_bin) and os.access(local_bin, os.X_OK):
+            return local_bin
+        # 3. Системный (в PATH)
+        system_bin = shutil.which("ollama")
+        if system_bin:
+            return system_bin
+        return ""
+
+    def _get_sdxl_python(self) -> str:
+        """Возвращает путь к SDXL venv python."""
+        sdxl_venv = self._read_config_value("sdxl/venv_path", "")
+        if not sdxl_venv:
+            sdxl_venv = os.path.join(self.base_dir, "venv_sdxl")
+        python_path = os.path.join(sdxl_venv, "bin", "python")
+        if os.path.exists(python_path):
+            return python_path
+        return ""
+
+    def _get_models_path(self) -> str:
+        """Возвращает путь к папке моделей SDXL."""
+        models_path = self._read_config_value("sdxl/models_path", "")
+        if not models_path:
+            models_path = os.path.join(self.base_dir, "data", "models")
+        return models_path
+
+    def _get_paths(self) -> dict:
+        """Читает пути моделей из Config с валидацией."""
+        models_path = self._read_config_value("sdxl/models_path", "")
+        if models_path and os.path.exists(models_path):
+            pass  # Используем путь из Config
+        else:
+            # Fallback на дефолт
+            models_path = os.path.join(self.base_dir, "data", "models")
+        
+        ollama_models_path = self._read_config_value("ollama/models_path", "")
+        if not ollama_models_path:
+            ollama_models_path = os.path.join(self.base_dir, "data", "ollama_models")
+        
+        return {
+            "models_path": models_path,
+            "ollama_models_path": ollama_models_path,
+        }
+
+    def _check_disk_space(self, required_gb: float, path: str) -> dict:
+        """Проверяет свободное место на диске."""
+        disk = self.detector.detect_disk(path)
+        if not disk.get("mounted"):
+            return {"ok": False, "message": f"Диск не смонтирован: {path}"}
+        free_gb = disk.get("free_gb", 0)
+        if free_gb < required_gb:
+            return {
+                "ok": False,
+                "message": f"Недостаточно места: нужно {required_gb:.1f} GB, свободно {free_gb:.1f} GB"
+            }
+        return {"ok": True, "message": f"Свободно {free_gb:.1f} GB"}
+
+    def _estimate_ollama_model_size(self, model_name: str) -> float:
+        """Оценивает размер Ollama модели по имени."""
+        name = model_name.lower()
+        if "0.5b" in name:
+            return 0.5
+        elif "1.5b" in name:
+            return 1.0
+        elif "3b" in name:
+            return 2.0
+        elif "7b" in name or "8b" in name:
+            return 5.0
+        elif "14b" in name:
+            return 9.0
+        return 4.0  # По умолчанию
+
+    def _list_ollama_models(self, models_path: str = "") -> list:
+        """Возвращает список установленных Ollama моделей.
+        Сканирует папку manifests/registry.ollama.ai/library/ напрямую,
+        не требует запущенного сервера (в отличие от ollama list).
+        
+        Реальная структура Ollama:
+            manifests/registry.ollama.ai/library/{model}/{tag}
+        Пример:
+            library/qwen2.5-coder/3b     ← файл-манифест
+            library/qwen2.5-coder/7b     ← файл-манифест
+        Результат: ["qwen2.5-coder:3b", "qwen2.5-coder:7b"]
+        """
+        models = []
+        if not models_path or not os.path.exists(models_path):
+            return models
+        
+        # Путь к манифестам: {models_path}/manifests/registry.ollama.ai/library/
+        library_path = os.path.join(models_path, "manifests", "registry.ollama.ai", "library")
+        if not os.path.isdir(library_path):
+            return models
+        
+        # Сканируем папки-модели напрямую в library/
+        for model_name in os.listdir(library_path):
+            model_path = os.path.join(library_path, model_name)
+            if not os.path.isdir(model_path):
+                continue
+            
+            # Сканируем теги (файлы внутри папки модели)
+            for tag in os.listdir(model_path):
+                tag_path = os.path.join(model_path, tag)
+                if os.path.isfile(tag_path):
+                    models.append(f"{model_name}:{tag}")
+        
+        return models
+
+    def _list_sdxl_models(self, models_path: str) -> list:
+        """Возвращает список установленных SDXL моделей."""
+        models = []
+        if not models_path or not os.path.exists(models_path):
+            return models
+        for item in os.listdir(models_path):
+            item_path = os.path.join(models_path, item)
+            # HF cache формат
+            if os.path.isdir(item_path) and item.startswith("models--"):
+                models.append(item)
+            # Single-file модели
+            elif os.path.isfile(item_path):
+                if item.endswith('.safetensors') or item.endswith('.ckpt'):
+                    models.append(item)
+            # Распакованные модели
+            elif os.path.isdir(item_path):
+                if os.path.exists(os.path.join(item_path, "model_index.json")):
+                    models.append(item)
+        return models
+
+    def is_installed(self) -> StepStatus:
+        """Проверяет, установлены ли модели."""
+        paths = self._get_paths()
+        ollama_installed = self._get_feature("ollama")
+        sdxl_installed = self._get_feature("sdxl")
+        
+        missing = []
+        
+        # Проверяем Ollama
+        if ollama_installed:
+            ollama_bin = self._find_ollama_binary()
+            # Сканируем папку моделей напрямую (не требует сервера)
+            ollama_models = self._list_ollama_models(paths['ollama_models_path'])
+            if not ollama_models:
+                missing.append("Ollama модели")
+        
+        # Проверяем SDXL
+        if sdxl_installed:
+            sdxl_models = self._list_sdxl_models(paths['models_path'])
+            if not sdxl_models:
+                missing.append("SDXL модели")
+        
+        if missing:
+            return StepStatus.failed(
+                f"Модели не установлены: {', '.join(missing)}",
+                details="Требуется скачивание моделей"
+            )
+        
+        return StepStatus.success("Модели установлены")
+
+    def _pull_ollama_model(self, ollama_bin: str, model_name: str, models_path: str = "", progress=None) -> StepStatus:
+        """Скачивает Ollama модель через ollama pull.
+        Передаёт OLLAMA_MODELS env, чтобы модель скачалась в правильную папку.
+        """
+        self._report(progress, 10, f"Скачивание Ollama модели: {model_name}")
+        
+        env = os.environ.copy()
+        if models_path:
+            env["OLLAMA_MODELS"] = models_path
+        
+        try:
+            # Запускаем ollama pull
+            proc = subprocess.Popen(
+                [ollama_bin, "pull", model_name],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, env=env
+            )
+            
+            # Читаем вывод построчно
+            last_pct = 0
+            for line in proc.stdout:
+                line = line.strip()
+                if line:
+                    # Парсим прогресс из вывода ollama pull
+                    # Формат: "pulling manifest", "downloading digests", "verifying sha256 digest", "writing manifest", "success"
+                    if "pulling" in line.lower() or "downloading" in line.lower():
+                        self._report(progress, 30, f"Ollama: {line[:60]}")
+                    elif "verifying" in line.lower():
+                        self._report(progress, 70, f"Ollama: {line[:60]}")
+                    elif "writing" in line.lower():
+                        self._report(progress, 90, f"Ollama: {line[:60]}")
+                    elif "success" in line.lower():
+                        self._report(progress, 100, f"Ollama: модель {model_name} скачана")
+            
+            proc.wait()
+            if proc.returncode == 0:
+                return StepStatus.success(f"Ollama модель {model_name} скачана")
+            else:
+                return StepStatus.failed(f"Ошибка скачивания Ollama модели: {model_name}")
+        except Exception as e:
+            return StepStatus.failed(f"Ошибка скачивания Ollama модели: {e}")
+
+    def _download_sdxl_model(self, sdxl_python: str, repo_id: str, models_path: str, progress=None) -> StepStatus:
+        """Скачивает SDXL модель через huggingface_hub.snapshot_download()."""
+        self._report(progress, 10, f"Скачивание SDXL модели: {repo_id}")
+        
+        # Создаём папку моделей
+        os.makedirs(models_path, exist_ok=True)
+        
+        # Скрипт для скачивания через SDXL venv python
+        script = f"""
+import sys
+try:
+    from huggingface_hub import snapshot_download
+    snapshot_download(
+        repo_id='{repo_id}',
+        local_dir='{models_path}',
+        local_dir_use_symlinks=False,
+        resume_download=True
+    )
+    print('SDXL_MODEL_DOWNLOADED')
+except Exception as e:
+    print(f'SDXL_MODEL_ERROR: {{e}}', file=sys.stderr)
+    sys.exit(1)
+"""
+        
+        try:
+            proc = subprocess.Popen(
+                [sdxl_python, "-c", script],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, cwd=self.base_dir
+            )
+            
+            # Читаем вывод (прогресс от tqdm будет в stderr, но мы объединили)
+            for line in proc.stdout:
+                line = line.strip()
+                if line:
+                    if "SDXL_MODEL_DOWNLOADED" in line:
+                        self._report(progress, 100, f"SDXL модель {repo_id} скачана")
+                    elif "SDXL_MODEL_ERROR" in line:
+                        return StepStatus.failed(f"Ошибка скачивания SDXL модели: {line}")
+                    elif "%" in line:
+                        # Парсим прогресс из tqdm (если есть)
+                        self._report(progress, 50, f"SDXL: {line[:60]}")
+            
+            proc.wait()
+            if proc.returncode == 0:
+                return StepStatus.success(f"SDXL модель {repo_id} скачана")
+            else:
+                return StepStatus.failed(f"Ошибка скачивания SDXL модели: {repo_id}")
+        except Exception as e:
+            return StepStatus.failed(f"Ошибка скачивания SDXL модели: {e}")
+
+    def install(self, progress=None) -> StepStatus:
+        """Скачивает модели."""
+        paths = self._get_paths()
+        
+        # Определяем, какие модели качать
+        ollama_installed = self._get_feature("ollama")
+        sdxl_installed = self._get_feature("sdxl")
+        
+        # Получаем рекомендации из advisor
+        recommendations = self.advisor.recommend_models()
+        
+        # Определяем модели для скачивания
+        if self.ollama_model is None and ollama_installed:
+            self.ollama_model = recommendations["ollama"]["recommended"]
+        if self.sdxl_model is None and sdxl_installed:
+            self.sdxl_model = recommendations["sdxl"]["recommended"]
+        
+        # Проверяем диск
+        total_required = 0
+        if ollama_installed and self.ollama_model:
+            total_required += self._estimate_ollama_model_size(self.ollama_model)
+        if sdxl_installed and self.sdxl_model:
+            total_required += 7  # DISK_SDXL_MODEL_GB
+        
+        disk_check = self._check_disk_space(total_required, os.path.expanduser("~"))
+        if not disk_check["ok"]:
+            return StepStatus.failed(disk_check["message"])
+        
+        self._report(progress, 5, f"Проверка диска: {disk_check['message']}")
+        
+        # Скачиваем Ollama модель
+        if ollama_installed and self.ollama_model:
+            ollama_bin = self._find_ollama_binary()
+            if not ollama_bin:
+                return StepStatus.failed("Ollama бинарник не найден. Сначала выполните step_ollama.")
+            
+            # Проверяем, не установлена ли уже модель
+            # Сканируем папку моделей напрямую (не требует сервера)
+            existing_models = self._list_ollama_models(paths['ollama_models_path'])
+            if self.ollama_model in existing_models:
+                self._report(progress, 20, f"Ollama модель {self.ollama_model} уже установлена")
+            else:
+                result = self._pull_ollama_model(ollama_bin, self.ollama_model, paths['ollama_models_path'], progress)
+                if not result.ok:
+                    return result
+        
+        # Скачиваем SDXL модель
+        if sdxl_installed and self.sdxl_model:
+            sdxl_python = self._get_sdxl_python()
+            if not sdxl_python:
+                return StepStatus.failed("SDXL venv не найден. Сначала выполните step_sdxl_env.")
+            
+            models_path = paths['models_path']
+            
+            # Проверяем, не установлена ли уже модель
+            existing_models = self._list_sdxl_models(models_path)
+            # Ищем модель по имени репозитория (например, "models--stabilityai--sdxl-base-1.0")
+            repo_folder_name = "models--" + self.sdxl_model.replace("/", "--")
+            model_found = any(repo_folder_name in m for m in existing_models)
+            
+            if model_found:
+                self._report(progress, 60, f"SDXL модель {self.sdxl_model} уже установлена")
+            else:
+                result = self._download_sdxl_model(sdxl_python, self.sdxl_model, models_path, progress)
+                if not result.ok:
+                    return result
+        
+        self._report(progress, 100, "Модели скачаны")
+        return StepStatus.success("Модели скачаны")
+
+    def verify(self) -> StepStatus:
+        """Проверяет после установки."""
+        return self.is_installed()

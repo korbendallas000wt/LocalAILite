@@ -2,7 +2,7 @@
 
 Приложение для работы с локальными AI-моделями: чат с Ollama + генерация изображений (SDXL/Diffusers) + визуальный редактор.
 
-**Платформа:** Manjaro Linux, PyQt6, Python 3.14
+**Платформа:** Manjaro Linux, PyQt6, Python 3.10-3.12
 
 ---
 
@@ -28,7 +28,7 @@
 |--------|--------|------|
 | main.py | v1.2.0 | Точка входа: QApplication, валидация путей, запуск MainWindow |
 | ui/main_window.py | v1.2.1 | Главное окно: 3 вкладки, меню, OllamaManager, SharedBottomBar |
-| ui/shared_bottom_bar.py | v1.2.0 | Общая нижняя панель: промпт, прогресс, таймер, RAM/CPU, индикатор ресурса, радиокнопки, единая кнопка действия |
+| ui/shared_bottom_bar.py | v1.4.0 | Общая нижняя панель: промпт, прогресс, таймер, RAM/CPU, индикатор ресурса с именем модели (㊘ Генерация Ollama · qwen2.5:3b), единая кнопка действия |
 | ui/cleanup_dialog.py | v1.2.1 | Диалог освобождения ресурсов при закрытии (5 шагов) |
 | ui/chat_widget.py | v1.0.0 | QTextBrowser + стриминг токенов + копирование кода |
 | ui/settings_panel.py | v1.0.0 | Правая панель Ollama (модель, temperature, timeout) |
@@ -39,7 +39,7 @@
 |--------|--------|------|
 | ui/tabs/ollama_tab.py | v1.2.0 | Чат: ChatWidget + SettingsPanel + OllamaClient, acquire/release ресурса |
 | ui/tabs/diffusers_tab.py | v1.2.1 | Генерация: preview + settings + DiffusersWorker, управление чекпоинтами и историей |
-| ui/tabs/diffusers_settings_panel.py | v1.0.0 | Настройки Diffusers + список архивных чекпоинтов |
+| ui/tabs/diffusers_settings_panel.py | v1.4.0 | Настройки Diffusers + реестр моделей v2.0 (editable=False) + список архивных чекпоинтов |
 | ui/tabs/image_prep_tab.py | v1.1.0 | Visual editor: превью + галерея + обработка изображений |
 | ui/tabs/image_prep_panel.py | v1.1.0 | Правая панель Visual editor (пресет, crop mode) |
 
@@ -56,7 +56,9 @@
 | core/resource_manager.py | v1.2.0 | Управление ресурсом (GPU/RAM): acquire/release, 2 арендатора (Ollama, Diffusers) |
 | core/resource_monitor.py | v1.2.1 | Мониторинг RAM/CPU, реальная проверка RAM (psutil.virtual_memory), оценка SDXL 9–11 GB, лимиты, CPU affinity, управление процессами по PID |
 | core/image_processor.py | v1.1.0 | Обработка изображений: resize, crop (center/letterbox/stretch) |
-| core/path_validator.py | v1.0.0 | Валидация venv, моделей, output, Ollama URL |
+| core/path_validator.py | v1.1.0 | Валидация venv, моделей, output, Ollama URL, бинарник Ollama, модели Ollama |
+| core/paths_manager.py | v1.4.0 | Единый модуль управления путями: ключи QSettings, дефолты, валидация с уровнями, источники моделей |
+| core/models_registry.py | v1.4.0 | Реестр моделей v2.0: короткое имя ↔ {path, full_name, type}, KNOWN_MODELS, типы hf_cache/file/folder |
 | core/markdown_parser.py | v1.0.0 | Markdown в HTML с адаптацией под системную тему KDE |
 
 ### Скрипты (scripts/)
@@ -78,13 +80,17 @@
 
 | Модуль | Версия | Роль |
 |--------|--------|------|
-| installer/cli.py | v1.3.0 | Точка входа бутстрапа: `python3 installer/cli.py`. Идемпотентен, прогоняет шаги с прогрессом. |
+| installer/cli.py | v1.4.0 | Точка входа инсталлятора (уровень 1+2): `python3 installer/cli.py`. Диагностика → data → venv → пути → бинарник Ollama → SDXL venv → модели. Идемпотентен. |
 | installer/detector.py | v1.3.0 | Диагностика железа: ОС, CPU (sse4_2/popcnt/avx/avx2/fma), RAM, GPU, Python, диск. Методы `can_use_pip_pyqt6()`, `detect_system_pyqt6()`. |
 | installer/requirements.py | v1.3.0 | Пороги ресурсов (RAM, CPU, диск) для вердиктов советника. |
 | installer/advisor.py | v1.3.0 | Честные вердикты: что потянет машина (Python/Ollama/SDXL), подбор моделей под железо. |
 | installer/steps/base.py | v1.3.0 | Контракт идемпотентного шага установки (`InstallStep`, `StepStatus`). |
 | installer/steps/step_config.py | v1.3.0 | Создание служебной структуры `data/` (5 папок: history, init_images, logs, pids, previews). |
 | installer/steps/step_env.py | v1.3.0 | Создание venv с **гибридной стратегией PyQt6**: pip на современном CPU, системный из pacman на старом (без sse4_2/popcnt). |
+| installer/steps/step_paths.py | v1.4.0 | Настройка путей (Ollama бинарник/модели, SDXL venv/модели, output). Интерактивный выбор в CLI, предупреждения об объёме. |
+| installer/steps/step_ollama.py | v1.4.0 | Скачивание и установка бинарника Ollama (~2.1 GB). Контракт: путь к файлу бинарника. |
+| installer/steps/step_sdxl_env.py | v1.4.0 | Создание SDXL venv + установка torch/diffusers (~6 GB). CPU-only или CUDA в зависимости от GPU. |
+| installer/steps/step_models.py | v1.4.0 | Скачивание моделей Ollama и SDXL (рекомендации советника). Сканирование manifests/ без запущенного сервера. |
 
 ---
 
@@ -107,9 +113,11 @@ LocalAILite/
 │   ├── history_manager.py               # Менеджер истории генерации
 │   ├── image_processor.py               # Обработка изображений
 │   ├── markdown_parser.py               # Markdown в HTML
+│   ├── models_registry.py               # Реестр моделей v2.0 (короткие имена, типы)
 │   ├── ollama_client.py                 # QThread-клиент к Ollama API
 │   ├── ollama_manager.py                # Управление ollama serve
 │   ├── path_validator.py                # Валидация путей
+│   ├── paths_manager.py                 # Единый модуль управления путями (v2.0)
 │   ├── resource_manager.py              # Управление ресурсом (GPU/RAM)
 │   └── resource_monitor.py              # Мониторинг RAM/CPU, лимиты
 │
@@ -143,15 +151,19 @@ LocalAILite/
 ├── utils/
 │   └── config.py                        # QSettings-обёртка
 │
-├── installer/                           # Инсталлятор (уровень 1 — бутстрап)
+├── installer/                           # Инсталлятор (уровень 1+2: бутстрап + полная установка)
 │   ├── cli.py                           # Точка входа: python3 installer/cli.py
 │   ├── detector.py                      # Диагностика железа
 │   ├── requirements.py                  # Пороги ресурсов
 │   ├── advisor.py                       # Вердикты (Python/Ollama/SDXL)
 │   └── steps/                           # Идемпотентные шаги установки
 │       ├── base.py                      # Контракт шага
-│       ├── step_config.py               # Создание data/
-│       └── step_env.py                  # venv + гибридная стратегия PyQt6
+│       ├── step_config.py               # Создание data/ (уровень 1)
+│       ├── step_env.py                  # venv + гибридная стратегия PyQt6 (уровень 1)
+│       ├── step_paths.py                # Настройка путей (уровень 2)
+│       ├── step_ollama.py               # Бинарник Ollama ~2.1 GB (уровень 2)
+│       ├── step_sdxl_env.py             # SDXL venv + torch/diffusers ~6 GB (уровень 2)
+│       └── step_models.py               # Скачивание моделей (уровень 2)
 │
 └── data/                                # Рабочие данные (в gitignore)
     ├── history/                         # История генерации: {timestamp}/step_NNNN.{png,pt,json}
@@ -171,13 +183,21 @@ LocalAILite/
 python3 installer/cli.py
 ```
 
-Инсталлятор (уровень 1 — бутстрап) автоматически:
+Инсталлятор (уровень 1+2) последовательно выполняет 8 шагов:
+
+**Уровень 1 — бутстрап** (минимум для запуска приложения):
 - Детектирует железо и честно скажет, что потянет машина
 - Создаст служебную структуру `data/`
 - Создаст venv и установит зависимости (PyQt6, requests, psutil)
 - На старом CPU (без sse4_2/popcnt) использует системный PyQt6 из pacman вместо pip
 
-Идемпотентен: повторный запуск пропустит уже установленное.
+**Уровень 2 — полная установка** (компоненты и модели):
+- Настроит пути к компонентам (Ollama бинарник/модели, SDXL venv/модели, output)
+- Скачает бинарник Ollama (~2.1 GB)
+- Создаст SDXL venv с torch/diffusers (~6 GB)
+- Скачает рекомендованные модели (Ollama + SDXL)
+
+Идемпотентен: повторный запуск пропустит уже установленное. Каждый шаг уровня 2 спрашивает подтверждение перед установкой.
 
 ### Зависимости
 
@@ -206,7 +226,10 @@ python main.py
 
 ## 📊 Ключевые возможности
 
-- **Инсталлятор**: детекция железа, идемпотентная установка, гибридная стратегия PyQt6 (pip/system) — `python3 installer/cli.py`
+- **Инсталлятор**: детекция железа, идемпотентная установка (уровень 1+2), гибридная стратегия PyQt6 (pip/system) — `python3 installer/cli.py`
+- **PathsManager**: единый модуль управления путями — дефолты, валидация с уровнями, источники моделей
+- **Реестр моделей v2.0**: короткие имена (SDXL Base 1.0), типы (hf_cache/file/folder), KNOWN_MODELS
+- **Индикатор активной модели**: строка ресурсов показывает модель при генерации
 - **Три режима работы**: чат с Ollama + генерация изображений SDXL + визуальный редактор
 - **Модульная архитектура**: SRP, сигнальная маршрутизация, изолированные потоки
 - **Управление ресурсами**: 2 арендатора (Ollama, Diffusers), только один генерирует одновременно

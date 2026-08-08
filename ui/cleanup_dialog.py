@@ -98,7 +98,20 @@ class CleanupThread(QThread):
         self.step_started.emit("Остановка Ollama-сервера...")
         try:
             if self.ollama_manager and self.ollama_manager.is_our_process():
-                self.ollama_manager.stop()
+                # Убиваем по PID (безопасно из QThread, не трогаем QProcess)
+                from core.resource_monitor import ResourceMonitor
+                pid_path = os.path.join(self.config.get_data_dir(), "pids", "ollama.pid")
+                pid = ResourceMonitor.read_pid_file(pid_path)
+                if pid > 0 and ResourceMonitor.is_process_alive(pid):
+                    ResourceMonitor.kill_process_by_pid(pid, force=False)
+                    self.msleep(500)
+                    if ResourceMonitor.is_process_alive(pid):
+                        ResourceMonitor.kill_process_by_pid(pid, force=True)
+                # Удаляем PID-файл
+                if os.path.exists(pid_path):
+                    os.remove(pid_path)
+                # Сбрасываем флаг (QProcess сам обнаружит смерть через finished)
+                self.ollama_manager._is_our_process = False
                 self.step_finished.emit(True, "Ollama-сервер остановлен")
             else:
                 self.step_finished.emit(True, "Ollama-сервер: внешний (не трогаем)")
@@ -142,8 +155,8 @@ class CleanupDialog(QDialog):
         self.ollama_manager = ollama_manager
         self.manual_mode = manual_mode
 
-        self.setWindowTitle("Закрытие приложения")
-        self.setFixedSize(400, 240)
+        self.setWindowTitle("Освобождение ресурсов")
+        self.setFixedSize(420, 310)
 
         layout = QVBoxLayout(self)
 
@@ -174,6 +187,12 @@ class CleanupDialog(QDialog):
         layout.addWidget(self.steps_label)
 
         layout.addStretch()
+
+        # Кнопка закрытия (активируется после завершения всех шагов)
+        self.close_btn = QPushButton("Закрыть")
+        self.close_btn.setEnabled(False)
+        self.close_btn.clicked.connect(self.accept)
+        layout.addWidget(self.close_btn)
 
         # Создаём поток очистки
         self.cleanup_thread = CleanupThread(
@@ -212,8 +231,10 @@ class CleanupDialog(QDialog):
         self.status_label.setStyleSheet(
             "color: green; font-size: 12px; font-weight: bold;"
         )
-        # Автоматически закрываем через 1 секунду
-        QTimer.singleShot(1000, self.accept)
+        # Активируем кнопку закрытия
+        self.close_btn.setEnabled(True)
+        # Автозакрытие через 2.5 секунды (пользователь может закрыть раньше)
+        QTimer.singleShot(2500, self.accept)
 
     def closeEvent(self, event):
         """Блокируем закрытие диалога до завершения"""

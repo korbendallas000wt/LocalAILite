@@ -105,21 +105,80 @@ class PathValidator:
         except Exception as e:
             return {"valid": False, "error": str(e), "models_count": 0}
 
+    def validate_ollama_binary(self, path: str) -> dict:
+        """Проверка бинарника Ollama.
+        Если путь не задан — проверяем системный бинарник (shutil.which).
+        Это позволяет использовать системный Ollama без указания пути.
+        """
+        import shutil
+        if not path:
+            # Проверяем системный бинарник
+            system_bin = shutil.which("ollama")
+            if system_bin:
+                return {"valid": True, "error": ""}
+            return {"valid": False, "error": "Путь не указан и системный бинарник не найден"}
+        if not os.path.exists(path):
+            return {"valid": False, "error": "Бинарник не найден"}
+        if not os.path.isfile(path):
+            return {"valid": False, "error": "Это не файл"}
+        if not os.access(path, os.X_OK):
+            return {"valid": False, "error": "Нет прав на исполнение"}
+        # Проверяем запуск
+        try:
+            result = subprocess.run(
+                [path, "--version"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                return {"valid": True, "error": ""}
+            return {"valid": False, "error": f"Ollama вернул ошибку: {result.stderr[:100]}"}
+        except subprocess.TimeoutExpired:
+            return {"valid": False, "error": "Таймаут при запуске Ollama"}
+        except Exception as e:
+            return {"valid": False, "error": str(e)}
+
+    def validate_ollama_models_path(self, path: str) -> dict:
+        """Проверка папки моделей Ollama.
+        В отличие от SDXL-моделей, папка может быть пустой
+        (модели ещё не скачаны) — это не ошибка.
+        """
+        if not path:
+            return {"valid": False, "error": "Путь не указан", "count": 0}
+        # Пытаемся создать, если не существует
+        try:
+            os.makedirs(path, exist_ok=True)
+        except Exception as e:
+            return {"valid": False, "error": f"Не удалось создать папку: {e}", "count": 0}
+        if not os.path.isdir(path):
+            return {"valid": False, "error": "Это не папка", "count": 0}
+        # Считаем модели (Ollama хранит в manifests/registry)
+        models_count = 0
+        manifests_dir = os.path.join(path, "manifests", "registry.ollama.ai", "library")
+        if os.path.isdir(manifests_dir):
+            models_count = len([d for d in os.listdir(manifests_dir)
+                               if os.path.isdir(os.path.join(manifests_dir, d))])
+        return {"valid": True, "error": "", "count": models_count}
+
     def validate_all(self, config) -> dict:
         """Проверка всех путей"""
         result = {
             "venv": self.validate_venv(config.get_sdxl_venv_path()),
             "models": self.validate_models_path(config.get_sdxl_models_path()),
             "output": self.validate_output_dir(config.get_sdxl_output_dir()),
-            "ollama": self.validate_ollama_url(config.get_ollama_url())
+            "ollama": self.validate_ollama_url(config.get_ollama_url()),
+            "ollama_binary": self.validate_ollama_binary(config.get("ollama/binary_path", "")),
+            "ollama_models": self.validate_ollama_models_path(config.get("ollama/models_path", ""))
         }
 
         # Проверяем, все ли критичные пути валидны
+        # ollama (URL) не критичен при старте — сервер запустится автоматически
+        # ollama_models не критичен — модели могут быть ещё не скачаны
+        # ollama_binary критичен — без него Ollama не запустится
         result["all_valid"] = (
             result["venv"]["valid"] and
             result["models"]["valid"] and
             result["output"]["valid"] and
-            result["ollama"]["valid"]
+            result["ollama_binary"]["valid"]
         )
 
         return result
@@ -136,6 +195,20 @@ class PathValidator:
             result["ollama"] = self.validate_ollama_url(config.get_ollama_url())
             if not result["ollama"]["valid"]:
                 all_valid = False
+            # Бинарник Ollama — КРИТИЧНО (без него Ollama не запустится)
+            ollama_binary = config.get("ollama/binary_path", "")
+            if ollama_binary:
+                result["ollama_binary"] = self.validate_ollama_binary(ollama_binary)
+                if not result["ollama_binary"]["valid"]:
+                    all_valid = False
+            else:
+                # Путь не задан — тоже критично
+                result["ollama_binary"] = {"valid": False, "error": "Путь к бинарнику не задан"}
+                all_valid = False
+            # Папка моделей Ollama (не критично — модели могут быть ещё не скачаны)
+            ollama_models = config.get("ollama/models_path", "")
+            if ollama_models:
+                result["ollama_models"] = self.validate_ollama_models_path(ollama_models)
 
         # SDXL / Diffusers
         if config.get_feature("sdxl", True):

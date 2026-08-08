@@ -146,10 +146,10 @@ class OllamaManager(QObject):
 
         # Передаём переменные окружения
         env = QProcessEnvironment.systemEnvironment()
-        models_path = self.config.get(
-            "ollama/models_path",
-            "/run/media/lin/DATA/Program Files/Ollama/"
-        )
+        # Путь к моделям Ollama — через PathsManager (единый источник дефолтов)
+        from core.paths_manager import PathsManager
+        pm = PathsManager()
+        models_path = pm.get_path(self.config, "ollama_models")
         env.insert("OLLAMA_MODELS", models_path)
         env.insert("OLLAMA_HOST", "127.0.0.1:11434")
         

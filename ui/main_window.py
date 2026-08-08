@@ -136,9 +136,41 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(cleanup_action)
     
     def _show_settings_dialog(self):
+        from core.paths_manager import PathsManager
+        pm = PathsManager()
+        # Сырые значения (без fallback на дефолты) для корректного детектирования
+        old_raw = pm.get_raw_paths(self.config)
+
         dialog = SettingsDialog(self.config, self)
         if dialog.exec():
             self._update_status()
+            new_raw = pm.get_raw_paths(self.config)
+
+            # Проверяем, изменились ли пути (сравниваем сырые значения)
+            paths_changed = any(old_raw[k] != new_raw[k] for k in old_raw)
+            if not paths_changed:
+                return
+
+            # Проверяем, занят ли ресурс генерацией
+            if self.resource_manager.is_resource_busy():
+                self._set_active_tab_status(
+                    "⚠ Пути изменятся после завершения генерации", "orange"
+                )
+                return
+
+            # Спрашиваем пользователя о перезагрузке
+            reply = QMessageBox.question(
+                self,
+                "Пути изменены",
+                "Пути к компонентам изменены.\n\n"
+                "Перезагрузить сейчас?\n\n"
+                "• Да — выгрузить модели и перезапустить\n"
+                "• Нет — изменения применятся при следующем запуске",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._reload_paths_full()
     
     def _manual_cleanup(self):
         """Ручной вызов очистки ресурсов (без закрытия приложения)"""
@@ -153,6 +185,79 @@ class MainWindow(QMainWindow):
         )
         cleanup_dialog.exec()
     
+    def _reload_paths_light(self):
+        """Лёгкая перезагрузка путей: обновить реестр моделей, перезапустить Ollama."""
+        # 1. Обновить реестры моделей в обоих табах
+        if self.diffusers_tab:
+            self.diffusers_tab.settings_panel._load_models()
+        if self.ollama_tab:
+            self.ollama_tab.settings_panel.load_models()
+        # 2. Перезапустить OllamaManager если это наш процесс
+        if self.ollama_manager and self.ollama_manager.is_our_process():
+            self.ollama_tab._set_status("Перезапуск Ollama...", "#DAA520")
+            self.ollama_manager.stop()
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(500, self.ollama_manager.start)
+        self._update_status()
+
+    def _reload_paths_full(self):
+        """Полная перезагрузка: выгрузить модели, очистить память, перезапустить."""
+        from ui.cleanup_dialog import CleanupDialog
+        cleanup_dialog = CleanupDialog(
+            self.ollama_tab,
+            self.diffusers_tab,
+            self.config,
+            self.ollama_manager,
+            self,
+            manual_mode=True
+        )
+        cleanup_dialog.exec()
+        # После очистки обновляем реестры моделей в обоих табах
+        if self.diffusers_tab:
+            self.diffusers_tab.settings_panel._load_models()
+        if self.ollama_tab:
+            self.ollama_tab.settings_panel.load_models()
+        # Перезапускаем Ollama с новыми путями (надёжно: ждём освобождения порта)
+        if self.ollama_manager:
+            self._restart_ollama_after_cleanup()
+        self._update_status()
+
+    def _restart_ollama_after_cleanup(self):
+        """Надёжный перезапуск Ollama после очистки (неблокирующий).
+        Использует QTimer вместо time.sleep, чтобы не фризить UI.
+        """
+        from PyQt6.QtCore import QTimer
+        self._restart_attempts = 0
+        self._max_restart_attempts = 10
+        self._check_port_timer = QTimer()
+        self._check_port_timer.setSingleShot(True)
+        self._check_port_timer.timeout.connect(self._check_port_and_start)
+        self._check_port_and_start()
+
+    def _check_port_and_start(self):
+        """Одна попытка проверки порта и запуска Ollama."""
+        if not self.ollama_manager.is_running():
+            # Проверяем бинарник перед запуском (не показываем диалог установки при смене путей)
+            bin_path = self.ollama_manager._get_ollama_binary()
+            if not bin_path:
+                if self.ollama_tab:
+                    self.ollama_tab._set_status("⚠ Бинарник Ollama не найден", "orange")
+                return
+            # Порт свободен — запускаем
+            if self.ollama_tab:
+                self.ollama_tab._set_status("Перезапуск Ollama...", "#DAA520")
+            self.ollama_manager.start()
+            return
+        self._restart_attempts += 1
+        if self._restart_attempts < self._max_restart_attempts:
+            # Порт ещё занят — пробуем через 500 мс
+            self._check_port_timer.start(500)
+        else:
+            # Порт не освободился — принудительный перезапуск
+            if self.ollama_tab:
+                self.ollama_tab._set_status("⚠ Порт занят, принудительный перезапуск...", "orange")
+            self.ollama_manager.kill_existing_and_start()
+
     def _update_status(self):
         validator = PathValidator()
         result = validator.validate_installed(self.config)
@@ -167,6 +272,11 @@ class MainWindow(QMainWindow):
                 errors.append("папка сохранения")
             if "ollama" in result and not result["ollama"]["valid"]:
                 errors.append("Ollama")
+            # Новые пути Ollama (бинарник критичен, модели не критичны)
+            if "ollama_binary" in result and not result["ollama_binary"]["valid"]:
+                errors.append("бинарник Ollama")
+            if "ollama_models" in result and not result["ollama_models"]["valid"]:
+                errors.append("модели Ollama")
             self._set_active_tab_status(f"⚠ Настройте пути: {', '.join(errors)}", "orange")
         else:
             self._set_active_tab_status("Готово", "green")
@@ -302,6 +412,9 @@ class MainWindow(QMainWindow):
             self.ollama_tab._set_status("✅ Ollama запущен (наш процесс)", "green")
         else:
             self.ollama_tab._set_status("✅ Ollama подключён (внешний)", "green")
+        # Обновляем список моделей (сервер готов, API доступен)
+        if self.ollama_tab:
+            self.ollama_tab.settings_panel.load_models()
     
     def _on_ollama_stopped(self):
         """Ollama остановлен"""
@@ -387,7 +500,16 @@ class MainWindow(QMainWindow):
     
     def _on_resource_acquired(self, module_name):
         """Ресурс захвачен модулем"""
-        self.shared_bar.set_mode(module_name)
+        # Получаем имя выбранной модели из активного таба
+        model_name = ""
+        try:
+            if module_name == "ollama" and self.ollama_tab:
+                model_name = self.ollama_tab.settings_panel.model_combo.currentText()
+            elif module_name == "diffusers" and self.diffusers_tab:
+                model_name = self.diffusers_tab.settings_panel.model_combo.currentText()
+        except Exception:
+            pass
+        self.shared_bar.set_mode(module_name, model_name)
         self._set_active_tab_status(f"⚠ {module_name}: генерация...", "orange")
     
     def _on_resource_released(self):

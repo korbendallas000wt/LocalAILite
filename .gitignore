@@ -1,5 +1,9 @@
-# Данные приложения
-data/
+# Данные приложения (кроме источников моделей и реестра)
+data/history/
+data/init_images/
+data/logs/
+data/pids/
+data/previews/
 bin/ollama/
 
 # Python
@@ -25,3 +29,6 @@ Thumbs.db
 # Local LLM context files
 full_docs.py
 full_context.py
+
+# Служебные файлы передачи контекста LLM (не для пользователей)
+docs/HANDOFF*.md

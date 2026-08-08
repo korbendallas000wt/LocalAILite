@@ -17,7 +17,7 @@
 | ui/tabs/ollama_tab.py | v1.2.0 | Чат. ChatWidget + SettingsPanel + OllamaClient (QThread), управление историей через ChatManager, acquire/release ресурса. |
 | ui/tabs/diffusers_tab.py | v1.2.1 | Генерация. QGraphicsView для превью, DiffusersSettingsPanel, DiffusersWorker (QProcess), управление чекпоинтами и историей. Исправлена утечка ресурса и гонка при остановке. |
 | ui/tabs/image_prep_tab.py | v1.1.0 | Visual editor. QGraphicsView + галерея + обработка изображений (resize/crop). |
-| ui/shared_bottom_bar.py | v1.2.0 | Общая панель. Поле ввода промпта, прогрессбар, таймер, индикаторы RAM/CPU, индикатор ресурса, радиокнопки (синхронизированы с табами), единая кнопка действия (3 состояния). |
+| ui/shared_bottom_bar.py | v1.4.0 | Общая панель. Поле ввода промпта, прогрессбар, таймер, индикаторы RAM/CPU, индикатор ресурса с именем модели (㊘ Генерация Ollama · qwen2.5:3b), единая кнопка действия (3 состояния). |
 | ui/cleanup_dialog.py | v1.2.1 | Очистка. Диалог освобождения ресурсов при закрытии (5 шагов): остановка Diffusers (включая kill по PID), выгрузка модели Ollama, стоп сервера, очистка памяти. |
 | ui/chat_widget.py | v1.0.0 | Чат-браузер. QTextBrowser с рендерингом Markdown, стриминг токенов, копирование кода по клику, контекстное меню. |
 | ui/settings_panel.py | v1.0.0 | Настройки Ollama. Правая панель (модель, temperature, top_p, max_tokens, timeout, stream, system_prompt). |
@@ -43,9 +43,10 @@
 | core/history_manager.py | v1.1.0 | Менеджер истории генерации. Создаёт папки data/history/{timestamp}/, сохраняет metadata.json, копирует PNG на каждом шаге, список историй, удаление. |
 | core/resource_manager.py | v1.2.0 | Управление ресурсом (GPU/RAM): acquire/release, 2 арендатора (Ollama, Diffusers). Переключение табов + выгрузка неактивных модулей. |
 | core/resource_monitor.py | v1.2.1 | Мониторинг RAM/CPU через psutil, реальная проверка RAM (psutil.virtual_memory), оценка потребления SDXL 9-11 GB, применение лимитов (cpu_affinity, priority, env-переменные), управление процессами по PID (read_pid_file, is_process_alive, kill_process_by_pid). |
-| core/models_registry.py | v1.2.0 | Реестр моделей Diffusers: красивое имя ↔ путь. Сканирование папки моделей, разрешение конфликтов имён. |
+| core/models_registry.py | v1.4.0 | Реестр моделей v2.0: короткое имя ↔ {path, full_name, type}. KNOWN_MODELS, типы (hf_cache/file/folder), проверка актуальности по models_path, beautify_name. |
 | core/image_processor.py | v1.1.0 | Обработка изображений: resize, crop (center/letterbox/stretch), нормализация до кратности 8. |
-| core/path_validator.py | v1.0.0 | Валидация путей (venv, модели, output, Ollama URL), проверка доступности, подсчёт моделей. |
+| core/path_validator.py | v1.1.0 | Валидация путей (venv, модели, output, Ollama URL, бинарник Ollama, модели Ollama), проверка доступности, подсчёт моделей. |
+| core/paths_manager.py | v1.4.0 | Единый модуль управления путями: ключи QSettings, дефолты, размеры, labels, критичность, get_raw_paths/get_effective_paths/set_path, валидация с уровнями (0/1/2), источники моделей из data/model_sources.json. |
 | core/markdown_parser.py | v1.0.0 | Парсер Markdown в HTML с адаптацией под системную тему KDE, подсветка кода, кнопки копирования, обработка ссылок, списков, заголовков. |
 
 ### Скрипты (scripts/)
@@ -68,13 +69,17 @@
 
 | Модуль | Версия | Роль |
 |--------|--------|------|
-| installer/cli.py | v1.3.0 | Точка входа бутстрапа: `python3 installer/cli.py`. Последовательно прогоняет шаги установки с прогрессом в терминале. Идемпотентен. |
+| installer/cli.py | v1.4.0 | Точка входа инсталлятора (уровень 1+2): `python3 installer/cli.py`. Последовательно прогоняет шаги: диагностика → data/ → venv → пути → бинарник Ollama → SDXL venv → модели. Идемпотентен. |
 | installer/detector.py | v1.3.0 | Диагностика железа: ОС, CPU (флаги sse4_2/popcnt/avx/avx2/fma), RAM, GPU, Python (pyenv/системный), диск. Методы `can_use_pip_pyqt6()`, `detect_system_pyqt6()` для определения стратегии установки Qt. |
 | installer/requirements.py | v1.3.0 | Пороги ресурсов (RAM, CPU, диск) для вердиктов советника. |
 | installer/advisor.py | v1.3.0 | Честные вердикты: что потянет машина (Python/Ollama/SDXL), подбор моделей под железо, предупреждения. |
 | installer/steps/base.py | v1.3.0 | Контракт идемпотентного шага установки (`InstallStep`, `StepStatus`): `is_installed() → install() → verify()`. |
 | installer/steps/step_config.py | v1.3.0 | Создание служебной структуры `data/` (5 папок: history, init_images, logs, pids, previews). |
 | installer/steps/step_env.py | v1.3.0 | Создание venv с **гибридной стратегией PyQt6**: pip на современном CPU (sse4_2+popcnt), системный из pacman на старом (без sse4_2/popcnt) через `--system-site-packages`. |
+| installer/steps/step_paths.py | v1.4.0 | Настройка путей (Ollama бинарник/модели, SDXL venv/модели, output). Интерактивный выбор в CLI, предупреждения о объёме, проверка свободного места. Использует PathsManager. |
+| installer/steps/step_ollama.py | v1.4.0 | Скачивание и установка бинарника Ollama (~2.1 GB). Контракт: путь к файлу бинарника (не к папке). Идемпотентен. |
+| installer/steps/step_sdxl_env.py | v1.4.0 | Создание SDXL venv + установка torch/diffusers (~6 GB). CPU-only или CUDA в зависимости от GPU. Идемпотентен. |
+| installer/steps/step_models.py | v1.4.0 | Скачивание моделей Ollama (ollama pull) и SDXL (huggingface_hub). Сканирование manifests/ без запущенного сервера. Идемпотентен. |
 
 ---
 
@@ -163,6 +168,87 @@
 - Размер: history_manager.get_history_size_mb(history_dir) → float
 
 ---
+
+## КОНЦЕПЦИЯ УСЕЧЁННОГО ПРИЛОЖЕНИЯ (уровень 2 инсталлера)
+
+### Суть концепции
+
+Все компоненты приложения опциональны. Пользователь через инсталлятор выбирает, что ставить: чат с Ollama, генерацию SDXL, Visual editor. Приложение при старте читает флаги из QSettings и создаёт только те табы, для которых установлена обвязка.
+
+Принцип: «не навязываем, но помогаем максимально» — инсталлер честно говорит, что потянет машина, и предлагает лучший путь, но не принуждает ставить то, что пользователю не нужно.
+
+### Флаги features/* в QSettings
+
+| Флаг | Что включает | Обвязка | Кто пишет |
+|---|---|---|---|
+| features/ollama | Таб «Ollama Chat» | бинарник Ollama + модели | step_ollama |
+| features/sdxl | Таб «Diffusers» | SDXL venv + torch + модели | step_sdxl_env |
+| features/image_prep | Таб «Visual editor» | не требует обвязки | инсталлер, по выбору юзера |
+| features/upscaler | Апскейлер (будущее) | Real-ESRGAN или аналог | будущий step_upscaler |
+
+Правила:
+- Минимум один компонент должен быть установлен. Если все флаги false — приложение показывает заглушку «Установите компоненты через python3 installer/cli.py»
+- Visual editor независим от Diffusers: он просто готовит изображения, а что с ними делать (img2img через Diffusers или апскейлинг через Real-ESRGAN) — зависит от установленных бэкендов
+- Visual editor тоже отключается, если юзеру нужна только LLM (features/image_prep = false)
+
+### Порядок шагов уровня 2 инсталлера
+
+Принцип: сначала инфраструктура, потом данные. Модели качаем в самом конце, когда всё остальное стоит и проверено.
+
+| # | Шаг | Что делает | Риск падения |
+|---|---|---|---|
+| 1 | step_paths | Настройка путей (Ollama, SDXL venv, модели, output) | низкий |
+| 2 | step_ollama | Бинарник Ollama в bin/ollama/ (2.1 GB) | средний |
+| 3 | step_sdxl_env | Создание SDXL venv + установка torch/diffusers | высокий (тяжёлый) |
+| 4 | step_models | Скачивание моделей (SDXL ~7 GB + Ollama) | средний |
+
+Если на шаге 3 torch не встанет (мало места, старый CPU) — модели ещё не скачаны, пользователь ничего не потерял.
+
+step_sdxl_env разбивается на подшаги:
+1. Создание SDXL venv
+2. Установка torch (самый тяжёлый, ~3 GB)
+3. Установка diffusers + torchvision + torchaudio + pillow
+4. Проверка импорта (import torch; import diffusers)
+
+Плюс проверка места на диске перед стартом (detector.detect_disk) — если не хватает ~4 GB под torch, предупреждаем заранее.
+
+### Аудит конфликтов усечённого приложения
+
+Найдено 8 файлов с жёсткими предположениями о трёх табах. Их нужно доработать:
+
+| # | Файл | Конфликт | Что доработать |
+|---|---|---|---|
+| 1 | main.py | validate_all() требует все 4 пути валидными | validate_installed() — проверять только установленные компоненты |
+| 2 | ui/main_window.py | Создаёт все 3 таба всегда | Условное создание табов по флагам |
+| 3 | ui/main_window.py | QTimer.singleShot(100, self.ollama_manager.start) | Не запускать Ollama, если features/ollama = false |
+| 4 | ui/main_window.py | _restore_bar_state/_save_bar_state: жёсткие индексы ["ollama","diffusers","image_prep"][i] | Использовать имя таба вместо индекса |
+| 5 | ui/main_window.py | on_generation_stopped: owner_index = 0 if owner=="ollama" else 1 if owner=="diffusers" | Динамический поиск индекса по имени |
+| 6 | ui/cleanup_dialog.py | CleanupThread обращается к tab.worker, tab.client без проверки None | if self.diffusers_tab and self.diffusers_tab.worker: |
+| 7 | core/resource_manager.py | on_tab_changed: list(self.modules.keys())[index] | Принимать имя модуля, а не индекс |
+| 8 | ui/dialogs/settings/settings_dialog.py | Создаёт 3 вкладки настроек всегда | Условное создание вкладок по флагам |
+
+Плюс 2 мягких конфликта (не упадут, но будут раздражать):
+- OllamaTab.SettingsPanel.load_models() делает запрос к Ollama при создании → если Ollama не запущен, статус будет кривой
+- PathValidator.validate_all() всегда проверяет 4 пути → MainWindow._update_status() покажет «⚠ Настройте пути» для неустановленных компонентов
+
+### План доработок (порядок реализации)
+
+Двигаемся снизу вверх — от фундамента к UI:
+
+1. utils/config.py — добавить get_feature(name) / set_feature(name, value)
+2. core/path_validator.py — validate_installed(config) вместо validate_all
+3. core/resource_manager.py — on_tab_changed принимает имя модуля
+4. ui/cleanup_dialog.py — обработка None табов
+5. ui/main_window.py — условное создание табов (самый большой блок)
+6. main.py — условный диалог настроек
+7. ui/dialogs/settings/settings_dialog.py — условные вкладки
+8. installer/ — запись флагов при установке компонентов
+
+### Нюансы и будущие расширения
+
+- Real-ESRGAN для апскейлинга: в будущем добавится features/upscaler и отдельный шаг step_upscaler. Visual editor будет работать с разными бэкендами (Diffusers для img2img, Real-ESRGAN для апскейлинга)
+- Апскейлер должен быть универсальным — и для слабого, и для сильного железа. Real-ESRGAN подходит: модель ~64 MB, быстрая на CPU
+- Инсталлер уровня 2 пишет флаги features/* при установке. Приложение читает их при старте
 
 ## ПУТИ И КОНФИГУРАЦИЯ
 
@@ -280,7 +366,7 @@
 - core/history_manager.py v1.1.0 (история генерации: data/history/{timestamp}/)
 - core/resource_manager.py v1.2.0 (управление ресурсом: 2 арендатора)
 - core/resource_monitor.py v1.2.1 (мониторинг RAM/CPU, реальная проверка RAM, PID-методы)
-- core/models_registry.py v1.2.0 (реестр моделей: красивое имя ↔ путь)
+- core/models_registry.py v1.4.0 (реестр моделей v2.0: короткое имя ↔ {path, full_name, type})
 - core/image_processor.py v1.1.0 (обработка изображений)
 - scripts/generate_diffusers.py v1.2.1 (CLI-генерация SDXL, точный resume, защита от перезаписи)
 - scripts/compare_images.py v1.2.1 (попиксельное сравнение изображений)

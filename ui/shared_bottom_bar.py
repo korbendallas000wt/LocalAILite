@@ -114,18 +114,30 @@ class SharedBottomBar(QWidget):
         mins, secs = divmod(seconds, 60)
         self.timer_label.setText(f"⏱ {mins:02d}:{secs:02d}")
 
-    def set_mode(self, mode: str):
-        """Устанавливает индикатор режима.
+    def set_mode(self, mode: str, model_name: str = ""):
+        """Устанавливает индикатор режима с именем модели.
         mode: "free" | "ollama" | "diffusers"
+        model_name: имя модели, которая сейчас генерирует (пусто = не показывать)
+        
+        Примеры вывода:
+          ㊘ Ресурсы свободны
+          ㊘ Генерация Ollama · qwen2.5:3b
+          ㊘ Генерация Diffusers · SDXL Base 1.0
         """
         if mode == "free":
             self.mode_label.setText("㊘ Ресурсы свободны")
             self.mode_label.setStyleSheet("font-size: 12px; color: green; font-weight: bold;")
         elif mode == "ollama":
-            self.mode_label.setText("㊘ Генерация Ollama")
+            label = "㊘ Генерация Ollama"
+            if model_name:
+                label += f" · {model_name}"
+            self.mode_label.setText(label)
             self.mode_label.setStyleSheet("font-size: 12px; color: orange; font-weight: bold;")
         elif mode == "diffusers":
-            self.mode_label.setText("㊘ Генерация Diffusers")
+            label = "㊘ Генерация Diffusers"
+            if model_name:
+                label += f" · {model_name}"
+            self.mode_label.setText(label)
             self.mode_label.setStyleSheet("font-size: 12px; color: orange; font-weight: bold;")
         else:
             self.mode_label.setText(str(mode))

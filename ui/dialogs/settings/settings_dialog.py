@@ -78,6 +78,10 @@ class SettingsDialog(QDialog):
             ollama_valid = validator.validate_ollama_url(self.paths_widget.ollama_edit.text())["valid"]
             if not ollama_valid:
                 all_valid = False
+            # Бинарник Ollama критичен (без него не запустится)
+            ollama_bin_valid = validator.validate_ollama_binary(self.paths_widget.ollama_bin_edit.text())["valid"]
+            if not ollama_bin_valid:
+                all_valid = False
         
         if not all_valid:
             # Есть проблемы — показываем предупреждение

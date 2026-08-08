@@ -27,10 +27,11 @@
     │   ├── history_manager.py               # Менеджер истории: data/history/{timestamp}/
     │   ├── image_processor.py               # Обработка изображений: resize, crop, letterbox, stretch
     │   ├── markdown_parser.py               # Markdown в HTML (подсветка кода, ссылки, списки)
-    │   ├── models_registry.py               # Реестр моделей: красивое имя ↔ путь
+    │   ├── models_registry.py               # Реестр моделей v2.0: короткое имя ↔ {path, full_name, type}
     │   ├── ollama_client.py                 # QThread-клиент к Ollama API (/api/chat)
     │   ├── ollama_manager.py                # Управление ollama serve (старт/стоп/конфликты портов)
-    │   ├── path_validator.py                # Валидация venv, моделей, output, Ollama URL
+    │   ├── paths_manager.py                 # Единый модуль управления путями (v2.0): дефолты, валидация, sources
+    │   ├── path_validator.py                # Валидация venv, моделей, output, Ollama URL/бинарник/модели
     │   ├── resource_manager.py              # Управление ресурсом: acquire/release, 2 арендатора
     │   └── resource_monitor.py              # Мониторинг RAM/CPU, реальная проверка RAM, лимиты, PID
     │
@@ -65,7 +66,7 @@
     ├── utils/
     │   └── config.py                        # QSettings-обёртка + пути (data/, bin/ollama/, Ollama)
     │
-    ├── installer/                           # Инсталлятор (уровень 1 — бутстрап)
+    ├── installer/                           # Инсталлятор (уровень 1+2: бутстрап + полная установка)
     │   ├── cli.py                           # Точка входа: python3 installer/cli.py
     │   ├── detector.py                      # Диагностика железа (ОС, CPU, RAM, GPU, Python, диск)
     │   ├── requirements.py                  # Пороги ресурсов
@@ -73,13 +74,19 @@
     │   └── steps/                           # Идемпотентные шаги установки
     │       ├── base.py                      # Контракт шага (InstallStep, StepStatus)
     │       ├── step_config.py               # Создание data/ (5 служебных папок)
-    │       └── step_env.py                  # venv + гибридная стратегия PyQt6
+    │       ├── step_env.py                  # venv + гибридная стратегия PyQt6
+    │       ├── step_paths.py                # Настройка путей (Ollama, SDXL venv, модели, output)
+    │       ├── step_ollama.py               # Скачивание бинарника Ollama (~2.1 GB)
+    │       ├── step_sdxl_env.py             # SDXL venv + torch/diffusers (~6 GB)
+    │       └── step_models.py               # Скачивание моделей Ollama и SDXL
     │
     ├── Repo/                                # Git-репозиторий (GitHub)
     │   ├── README.md                        # README для GitHub
     │   └── docs/                            # Копия docs/ для merge_docs.py
     │
     └── data/                                # Рабочие данные (в gitignore)
+        ├── model_sources.json               # Ссылки на источники моделей (HuggingFace, CivitAI)
+        ├── models_registry.json             # Реестр моделей v2.0 (короткое имя ↔ {path, full_name, type})
         ├── history/                         # История генерации: {timestamp}/step_NNNN.{pt,json} + metadata.json
         ├── init_images/                     # Подготовленные изображения для img2img
         ├── logs/                            # Логи diffusers_*.log и ollama.log

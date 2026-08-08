@@ -137,6 +137,147 @@ class Advisor:
             "estimated_time": est,
         }
 
+    # === Рекомендации моделей (для step_models и UI-визарда) ===
+    def recommend_models(self, detection: dict = None) -> dict:
+        """Возвращает рекомендации моделей с альтернативами и предупреждениями.
+        
+        Принцип: не навязываем, но помогаем максимально.
+        Рекомендация выделена, альтернативы показаны с честными заметками.
+        Пользователь может выбрать любую модель или добавить свою.
+        
+        Returns:
+            dict: {
+                "ollama": {"recommended": str, "alternatives": [...]},
+                "sdxl": {"recommended": str, "alternatives": [...]}
+            }
+        """
+        if detection is None:
+            detection = self.detector.detect_all()
+        
+        ram_gb = detection.get("ram", {}).get("total_gb", 0)
+        cpu = detection.get("cpu", {})
+        gpu = detection.get("gpu", {})
+        cores = cpu.get("cores", 1)
+        has_avx2 = cpu.get("flags", {}).get("avx2", False)
+        has_cuda = gpu.get("vendor") == "nvidia" and gpu.get("cuda_present", False)
+        
+        return {
+            "ollama": self._recommend_ollama_models(ram_gb, cores),
+            "sdxl": self._recommend_sdxl_models(ram_gb, has_cuda, has_avx2, cores),
+        }
+    
+    def _recommend_ollama_models(self, ram_gb: float, cores: int) -> dict:
+        """Рекомендации Ollama-моделей на основе RAM."""
+        recommended = self._pick_ollama_model(ram_gb)
+        
+        # Список всех доступных моделей с заметками
+        all_models = [
+            {
+                "name": "qwen2.5-coder:0.5b",
+                "size_gb": 0.5,
+                "note": "⚡ Очень быстрая, ограниченные возможности кодинга",
+                "min_ram": 2,
+            },
+            {
+                "name": "qwen2.5-coder:1.5b",
+                "size_gb": 1.0,
+                "note": "⚡ Быстрая, базовый кодинг и чат",
+                "min_ram": 4,
+            },
+            {
+                "name": "qwen2.5-coder:3b",
+                "size_gb": 2.0,
+                "note": "✅ Хороший баланс скорости и качества",
+                "min_ram": 6,
+            },
+            {
+                "name": "qwen2.5-coder:7b",
+                "size_gb": 4.5,
+                "note": "🐢 Медленная на CPU (~1-2 мин/ответ), хорошее качество",
+                "min_ram": 10,
+            },
+            {
+                "name": "qwen2.5-coder:14b",
+                "size_gb": 9.0,
+                "note": "🐢 Очень медленная на CPU, требует ≥16 GB RAM",
+                "min_ram": 16,
+            },
+        ]
+        
+        # Добавляем предупреждения к моделям, которые не подходят под железо
+        alternatives = []
+        for m in all_models:
+            entry = {"name": m["name"], "note": m["note"]}
+            if ram_gb < m["min_ram"]:
+                entry["note"] += f" ⚠ Нужно ≥{m['min_ram']} GB RAM"
+            if m["name"] == recommended:
+                entry["recommended"] = True
+            alternatives.append(entry)
+        
+        return {
+            "recommended": recommended,
+            "alternatives": alternatives,
+        }
+    
+    def _recommend_sdxl_models(self, ram_gb: float, has_cuda: bool,
+                                has_avx2: bool, cores: int) -> dict:
+        """Рекомендации SDXL-моделей на основе железа."""
+        # Базовая рекомендация — всегда SDXL Base
+        recommended = "stabilityai/stable-diffusion-xl-base-1.0"
+        
+        alternatives = [
+            {
+                "name": "stabilityai/stable-diffusion-xl-base-1.0",
+                "display_name": "SDXL Base 1.0",
+                "size_gb": 6.5,
+                "note": "✅ Стандартная модель, универсальная",
+                "recommended": True,
+            },
+            {
+                "name": "Lykon/dreamshaper-xl-v2-turbo",
+                "display_name": "Dreamshaper XL v2 Turbo",
+                "size_gb": 6.5,
+                "note": "🎨 Художественный стиль, быстрее base",
+            },
+            {
+                "name": "RunDiffusion/Juggernaut-XL-v9",
+                "display_name": "Juggernaut XL v9",
+                "size_gb": 6.5,
+                "note": "📸 Фотореализм, высокое качество",
+            },
+            {
+                "name": "stabilityai/stable-diffusion-xl-refiner-1.0",
+                "display_name": "SDXL Refiner 1.0",
+                "size_gb": 6.2,
+                "note": "🔧 Улучшает детали (используется вместе с Base)",
+            },
+        ]
+        
+        # Предупреждения для слабого железа
+        warnings = []
+        if not has_cuda and not has_avx2:
+            warnings.append(
+                "Без AVX2 и CUDA генерация будет очень медленной. "
+                "Рекомендуем размер 512×512."
+            )
+        elif not has_cuda:
+            warnings.append(
+                "Нет CUDA — генерация на CPU. "
+                "Рекомендуем размер 512×512 для приемлемой скорости."
+            )
+        
+        if ram_gb < req.RAM_SDXL_COMFORTABLE_GB:
+            warnings.append(
+                f"RAM {ram_gb:.0f} GB < комфортных {req.RAM_SDXL_COMFORTABLE_GB} GB. "
+                f"Может потребоваться закрытие других приложений."
+            )
+        
+        return {
+            "recommended": recommended,
+            "alternatives": alternatives,
+            "warnings": warnings,
+        }
+
     # === Предупреждения ===
     def _collect_warnings(self, detection: dict) -> list:
         warnings = []

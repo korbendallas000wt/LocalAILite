@@ -26,6 +26,10 @@ from installer.detector import HardwareDetector
 from installer.advisor import Advisor
 from installer.steps.step_config import StepConfig
 from installer.steps.step_env import StepEnv
+from installer.steps.step_paths import StepPaths
+from installer.steps.step_ollama import StepOllama
+from installer.steps.step_sdxl_env import StepSdxlEnv
+from installer.steps.step_models import StepModels
 
 
 def print_header(text):
@@ -130,18 +134,102 @@ def main():
     except Exception as e:
         print(f"  ⚠ Ошибка записи флагов: {e}")
 
-    # 5. Итог
-    print_header("Итог")
-    if result.ok or result.skipped:
-        print("  ✅ Бутстрап завершён!")
-        print("  Запуск приложения:")
-        print("     venv/bin/python main.py")
-        print()
-        print("  Следующий шаг (уровень 2):")
-        print("     настройка путей и моделей через UI-визард")
+    # === УРОВЕНЬ 2: Пути, бинарники, окружения, модели ===
+
+    # Шаг 5: Настройка путей
+    print_step("Шаг 5: Настройка путей")
+    step_paths = StepPaths()
+    paths_status = step_paths.is_installed()
+    if paths_status.ok:
+        print(f"  ⏭ {paths_status.message}")
     else:
-        print("  ❌ Бутстрап не завершён. Проверьте ошибки выше.")
-        sys.exit(1)
+        reply = input("  Настроить пути сейчас? [Y/n]: ").strip().lower()
+        if reply in ('', 'y', 'yes', 'да'):
+            chosen_paths = step_paths.choose_paths_interactive()
+            result = step_paths.install(
+                progress=lambda pct, msg: print(f"   [{pct:3d}%] {msg}"),
+                paths=chosen_paths
+            )
+            icon = "✅" if result.ok else "❌"
+            print(f"  {icon} {result.message}")
+        else:
+            print("  ⏭ Пропущено (пути можно настроить позже через UI)")
+
+    # Шаг 6: Бинарник Ollama (только если features/ollama)
+    ollama_supported = verdict["ollama"]["supported"]
+    if ollama_supported:
+        print_step("Шаг 6: Бинарник Ollama")
+        step_ollama = StepOllama()
+        ollama_status = step_ollama.is_installed()
+        if ollama_status.ok:
+            print(f"  ⏭ {ollama_status.message}")
+        else:
+            reply = input("  Установить бинарник Ollama (~2.1 GB)? [Y/n]: ").strip().lower()
+            if reply in ('', 'y', 'yes', 'да'):
+                result = step_ollama.install(
+                    progress=lambda pct, msg: print(f"   [{pct:3d}%] {msg}")
+                )
+                icon = "✅" if result.ok else "❌"
+                print(f"  {icon} {result.message}")
+            else:
+                print("  ⏭ Пропущено (бинарник можно установить позже)")
+    else:
+        print_step("Шаг 6: Бинарник Ollama")
+        print(f"  ⏭ Пропущено: {verdict['ollama']['message']}")
+
+    # Шаг 7: SDXL окружение (только если features/sdxl)
+    sdxl_supported = verdict["sdxl"]["supported"]
+    if sdxl_supported:
+        print_step("Шаг 7: SDXL окружение (torch/diffusers)")
+        step_sdxl_env = StepSdxlEnv()
+        sdxl_env_status = step_sdxl_env.is_installed()
+        if sdxl_env_status.ok:
+            print(f"  ⏭ {sdxl_env_status.message}")
+        else:
+            reply = input("  Создать SDXL окружение (~6 GB)? [Y/n]: ").strip().lower()
+            if reply in ('', 'y', 'yes', 'да'):
+                result = step_sdxl_env.install(
+                    progress=lambda pct, msg: print(f"   [{pct:3d}%] {msg}")
+                )
+                icon = "✅" if result.ok else "❌"
+                print(f"  {icon} {result.message}")
+            else:
+                print("  ⏭ Пропущено (SDXL окружение можно создать позже)")
+    else:
+        print_step("Шаг 7: SDXL окружение")
+        print(f"  ⏭ Пропущено: {verdict['sdxl']['message']}")
+
+    # Шаг 8: Скачивание моделей (только если есть хотя бы один компонент)
+    if ollama_supported or sdxl_supported:
+        print_step("Шаг 8: Скачивание моделей")
+        step_models = StepModels()
+        models_status = step_models.is_installed()
+        if models_status.ok:
+            print(f"  ⏭ {models_status.message}")
+        else:
+            reply = input("  Скачать модели (рекомендованные советником)? [Y/n]: ").strip().lower()
+            if reply in ('', 'y', 'yes', 'да'):
+                result = step_models.install(
+                    progress=lambda pct, msg: print(f"   [{pct:3d}%] {msg}")
+                )
+                icon = "✅" if result.ok else "❌"
+                print(f"  {icon} {result.message}")
+            else:
+                print("  ⏭ Пропущено (модели можно скачать позже)")
+    else:
+        print_step("Шаг 8: Скачивание моделей")
+        print("  ⏭ Пропущено: нет поддерживаемых компонентов")
+
+    # 9. Итог
+    print_header("Итог")
+    print("  ✅ Установка завершена!")
+    print("  Запуск приложения:")
+    print("     venv/bin/python main.py")
+    print()
+    print("  Компоненты:")
+    print(f"     Ollama: {'✅ поддерживается' if ollama_supported else '❌ не поддерживается'}")
+    print(f"     SDXL:   {'✅ поддерживается' if sdxl_supported else '❌ не поддерживается'}")
+    print(f"     Visual editor: ✅ всегда доступен")
 
 
 if __name__ == "__main__":

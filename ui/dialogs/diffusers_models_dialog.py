@@ -21,21 +21,17 @@ class DiffusersModelsDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        # Группа ссылок на ресурсы
+        # Группа ссылок на ресурсы (через PathsManager)
+        from core.paths_manager import PathsManager
+        pm = PathsManager()
+        sources = pm.get_model_sources().get("sdxl", [])
         links_group = QGroupBox("Где найти модели")
         links_layout = QVBoxLayout()
 
-        links = [
-            ("🌐 HuggingFace Diffusers", "https://huggingface.co/models?pipeline_tag=text-to-image&sort=downloads"),
-            ("🎨 CivitAI (SDXL модели)", "https://civitai.com/model-versions?baseModel=SDXL%201.0"),
-            ("📦 HuggingFace SDXL Base", "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0"),
-            ("📦 HuggingFace SDXL Refiner", "https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0")
-        ]
-
-        for text, url in links:
-            link_btn = QPushButton(text)
+        for source in sources:
+            link_btn = QPushButton(source["label"])
             link_btn.setStyleSheet("text-align: left; padding: 5px;")
-            link_btn.clicked.connect(lambda checked, u=url: QDesktopServices.openUrl(QUrl(u)))
+            link_btn.clicked.connect(lambda checked, u=source["url"]: QDesktopServices.openUrl(QUrl(u)))
             links_layout.addWidget(link_btn)
 
         links_group.setLayout(links_layout)
@@ -75,36 +71,31 @@ class DiffusersModelsDialog(QDialog):
         self._load_models()
 
     def _load_models(self):
-        """Загружает список установленных моделей"""
+        """Загружает список установленных моделей из реестра v2.0.
+        Показывает короткие имена + полное имя с типом.
+        """
         self.models_list.clear()
 
-        if not self.models_path or not os.path.exists(self.models_path):
+        from core.models_registry import load_registry
+        registry = load_registry(self.config)
+        if not registry:
             return
 
-        for item in os.listdir(self.models_path):
-            item_path = os.path.join(self.models_path, item)
+        # Иконки и подписи по типу модели
+        type_icons = {"hf_cache": "📦", "file": "📄", "folder": "📁"}
+        type_labels = {"hf_cache": "HF cache", "file": "файл", "folder": "папка"}
 
-            # HF cache формат
-            if os.path.isdir(item_path) and item.startswith("models--"):
-                model_id = item[len("models--"):].replace("--", "/")
-                list_item = QListWidgetItem(f"📦 {model_id}")
-                list_item.setData(Qt.ItemDataRole.UserRole, item_path)
-                self.models_list.addItem(list_item)
-
-            # Одиночные файлы
-            elif os.path.isfile(item_path):
-                if item.endswith('.safetensors') or item.endswith('.ckpt'):
-                    name = os.path.splitext(item)[0]
-                    list_item = QListWidgetItem(f"📄 {name}")
-                    list_item.setData(Qt.ItemDataRole.UserRole, item_path)
-                    self.models_list.addItem(list_item)
-
-            # Распакованные модели
-            elif os.path.isdir(item_path) and not item.startswith("models--"):
-                if os.path.exists(os.path.join(item_path, "model_index.json")):
-                    list_item = QListWidgetItem(f"📁 {item}")
-                    list_item.setData(Qt.ItemDataRole.UserRole, item_path)
-                    self.models_list.addItem(list_item)
+        for display_name, info in sorted(registry.items()):
+            if not isinstance(info, dict):
+                continue
+            model_type = info.get("type", "file")
+            full_name = info.get("full_name", "")
+            icon = type_icons.get(model_type, "❓")
+            # Показываем: иконка + короткое имя (тип: полное имя)
+            label = f"{icon} {display_name} ({type_labels.get(model_type, '?')}: {full_name})"
+            list_item = QListWidgetItem(label)
+            list_item.setData(Qt.ItemDataRole.UserRole, info.get("path", ""))
+            self.models_list.addItem(list_item)
 
     def _on_model_selected(self):
         """Обновляет доступность кнопки удаления"""

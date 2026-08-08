@@ -22,7 +22,7 @@ class DiffusersSettingsPanel(QWidget):
         layout.addWidget(QLabel("Model:"))
         model_row = QHBoxLayout()
         self.model_combo = QComboBox()
-        self.model_combo.setEditable(True)
+        # editable=False: пользователь выбирает только из списка реестра
         model_row.addWidget(self.model_combo, 1)
         self.refresh_models_btn = QPushButton("🔄")
         self.refresh_models_btn.setFixedWidth(40)
@@ -229,7 +229,9 @@ class DiffusersSettingsPanel(QWidget):
                 field.setEnabled(enabled)
     
     def _load_models(self):
-        """Загружает список моделей из реестра"""
+        """Загружает список моделей из реестра v2.0 (короткие имена).
+        Если реестр пуст — ComboBox остаётся пустым (без fallback).
+        """
         from core.models_registry import load_registry
         
         current_text = self.model_combo.currentText()
@@ -243,8 +245,6 @@ class DiffusersSettingsPanel(QWidget):
             
             if current_text and current_text in display_names:
                 self.model_combo.setCurrentText(current_text)
-        else:
-            self.model_combo.addItem("model.safetensors")
     
     def _random_seed(self):
         self.seed_edit.setText(str(random.randint(0, 2**32 - 1)))
@@ -265,11 +265,12 @@ class DiffusersSettingsPanel(QWidget):
             if index >= 0:
                 self.model_combo.setCurrentIndex(index)
             else:
-                # 2. Если не нашли — пробуем найти по пути в реестре
+                # 2. Если не нашли — пробуем найти по пути в реестре (формат v2.0)
                 from core.models_registry import load_registry
                 registry = load_registry(self.config)
                 found = False
-                for display_name, path in registry.items():
+                for display_name, info in registry.items():
+                    path = info.get("path", "") if isinstance(info, dict) else str(info)
                     if model in path or os.path.basename(path) == model:
                         idx = self.model_combo.findText(display_name)
                         if idx >= 0:
@@ -277,8 +278,9 @@ class DiffusersSettingsPanel(QWidget):
                             found = True
                             break
                 if not found:
-                    # 3. Совсем не нашли — устанавливаем как есть
-                    self.model_combo.setEditText(model)
+                    # 3. Совсем не нашли — ComboBox остаётся без выбора
+                    # (editable=False, setEditText недоступен)
+                    pass
         
         # Scheduler
         scheduler = json_data.get("scheduler", "")
