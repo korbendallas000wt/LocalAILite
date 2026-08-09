@@ -240,8 +240,46 @@ class StepModels(InstallStep):
         
         return StepStatus.success("Модели установлены")
 
+    # === Управление Ollama сервером для скачивания моделей ===
+    
+    def _is_ollama_server_running(self) -> bool:
+        """Проверяет, запущен ли Ollama сервер на порту 11434."""
+        import socket
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex(('localhost', 11434))
+            sock.close()
+            return result == 0
+        except Exception:
+            return False
+    
+    def _start_ollama_server(self, ollama_bin: str, models_path: str = ""):
+        """Запускает Ollama сервер в фоне. Возвращает Popen-объект."""
+        env = os.environ.copy()
+        if models_path:
+            env["OLLAMA_MODELS"] = models_path
+        
+        proc = subprocess.Popen(
+            [ollama_bin, "serve"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=env
+        )
+        return proc
+    
+    def _wait_ollama_ready(self, timeout: int = 30) -> bool:
+        """Ждёт, пока Ollama сервер станет доступен на порту 11434."""
+        import time
+        start = time.time()
+        while time.time() - start < timeout:
+            if self._is_ollama_server_running():
+                return True
+            time.sleep(0.5)
+        return False
+    
     def _pull_ollama_model(self, ollama_bin: str, model_name: str, models_path: str = "", progress=None) -> StepStatus:
         """Скачивает Ollama модель через ollama pull.
+        Если сервер не запущен — запускает его, скачивает модель, останавливает.
         Передаёт OLLAMA_MODELS env, чтобы модель скачалась в правильную папку.
         """
         self._report(progress, 10, f"Скачивание Ollama модели: {model_name}")
@@ -249,6 +287,26 @@ class StepModels(InstallStep):
         env = os.environ.copy()
         if models_path:
             env["OLLAMA_MODELS"] = models_path
+        
+        # Проверяем, запущен ли сервер
+        server_proc = None
+        server_started_by_us = False
+        if not self._is_ollama_server_running():
+            self._report(progress, 12, "Ollama сервер не запущен — запускаем...")
+            server_proc = self._start_ollama_server(ollama_bin, models_path)
+            server_started_by_us = True
+            if not self._wait_ollama_ready(timeout=30):
+                # Не запустился — пытаемся убить и сообщаем об ошибке
+                if server_proc:
+                    try:
+                        server_proc.terminate()
+                    except Exception:
+                        pass
+                return StepStatus.failed(
+                    "Ollama сервер не запустился за 30 секунд",
+                    details="Невозможно скачать модель без работающего сервера"
+                )
+            self._report(progress, 15, "Ollama сервер готов")
         
         try:
             # Запускаем ollama pull
@@ -264,7 +322,6 @@ class StepModels(InstallStep):
                 line = line.strip()
                 if line:
                     # Парсим прогресс из вывода ollama pull
-                    # Формат: "pulling manifest", "downloading digests", "verifying sha256 digest", "writing manifest", "success"
                     if "pulling" in line.lower() or "downloading" in line.lower():
                         self._report(progress, 30, f"Ollama: {line[:60]}")
                     elif "verifying" in line.lower():
@@ -281,6 +338,17 @@ class StepModels(InstallStep):
                 return StepStatus.failed(f"Ошибка скачивания Ollama модели: {model_name}")
         except Exception as e:
             return StepStatus.failed(f"Ошибка скачивания Ollama модели: {e}")
+        finally:
+            # Останавливаем сервер, если мы его запустили
+            if server_started_by_us and server_proc:
+                try:
+                    server_proc.terminate()
+                    server_proc.wait(timeout=5)
+                except Exception:
+                    try:
+                        server_proc.kill()
+                    except Exception:
+                        pass
 
     def _download_sdxl_model(self, sdxl_python: str, repo_id: str, models_path: str, progress=None) -> StepStatus:
         """Скачивает SDXL модель через huggingface_hub.snapshot_download()."""
@@ -296,9 +364,7 @@ try:
     from huggingface_hub import snapshot_download
     snapshot_download(
         repo_id='{repo_id}',
-        local_dir='{models_path}',
-        local_dir_use_symlinks=False,
-        resume_download=True
+        cache_dir='{models_path}'
     )
     print('SDXL_MODEL_DOWNLOADED')
 except Exception as e:

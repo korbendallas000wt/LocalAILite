@@ -34,6 +34,40 @@ class HardwareDetector:
     PYTHON_COMPAT_MIN = (3, 10)
     PYTHON_COMPAT_MAX = (3, 12)
 
+    # Маппинг пакетных менеджеров: команда установки, флаг, пакет PyQt6
+    PKG_MANAGERS = {
+        "pacman": {
+            "install_cmd": ["sudo", "pacman", "-S"],
+            "noconfirm_flag": "--noconfirm",
+            "pyqt6_package": "python-pyqt6",
+        },
+        "apt": {
+            "install_cmd": ["sudo", "apt-get", "install"],
+            "noconfirm_flag": "-y",
+            "pyqt6_package": "python3-pyqt6",
+        },
+        "dnf": {
+            "install_cmd": ["sudo", "dnf", "install"],
+            "noconfirm_flag": "-y",
+            "pyqt6_package": "python3-pyqt6",
+        },
+        "zypper": {
+            "install_cmd": ["sudo", "zypper", "install"],
+            "noconfirm_flag": "-y",
+            "pyqt6_package": "python3-pyqt6",
+        },
+        "emerge": {
+            "install_cmd": ["sudo", "emerge"],
+            "noconfirm_flag": "",
+            "pyqt6_package": "dev-python/PyQt6",
+        },
+        "xbps": {
+            "install_cmd": ["sudo", "xbps-install"],
+            "noconfirm_flag": "-y",
+            "pyqt6_package": "python3-PyQt6",
+        },
+    }
+
     # === ОС и пакетный менеджер ===
     def detect_os(self) -> dict:
         info = {
@@ -59,8 +93,14 @@ class HardwareDetector:
             info["family"], info["pkg_manager"] = "arch", "pacman"
         elif any(x in ids for x in ("debian", "ubuntu")):
             info["family"], info["pkg_manager"] = "debian", "apt"
-        elif any(x in ids for x in ("fedora", "rhel", "centos")):
+        elif any(x in ids for x in ("fedora", "rhel", "centos", "rocky", "almalinux")):
             info["family"], info["pkg_manager"] = "fedora", "dnf"
+        elif any(x in ids for x in ("suse", "opensuse")):
+            info["family"], info["pkg_manager"] = "suse", "zypper"
+        elif any(x in ids for x in ("gentoo",)):
+            info["family"], info["pkg_manager"] = "gentoo", "emerge"
+        elif any(x in ids for x in ("void",)):
+            info["family"], info["pkg_manager"] = "void", "xbps"
         return info
 
     # === CPU ===

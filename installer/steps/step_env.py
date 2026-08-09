@@ -9,7 +9,7 @@ PyQt6, requests, psutil. Это минимум для запуска main.py (у
 
 Стратегия установки PyQt6 (гибридная):
 - Современный CPU (sse4_2 + popcnt) → PyQt6 из pip в venv
-- Старый CPU (без sse4_2) → системный PyQt6 из pacman (venv --system-site-packages)
+- Старый CPU (без sse4_2) → системный PyQt6 из пакетного менеджера (venv --system-site-packages)
 - Ничего не подходит → честно сообщаем
 
 Идемпотентен: если venv уже создан и зависимости установлены — пропускает.
@@ -105,6 +105,52 @@ class StepEnv(InstallStep):
             return self.PIP_ONLY_PACKAGES
         return []
 
+    def _ensure_system_pyqt6(self) -> bool:
+        """Пытается установить системный PyQt6 через пакетный менеджер.
+        Возвращает True, если после установки PyQt6 работает.
+        Спрашивает разрешение пользователя (sudo).
+        """
+        os_info = self.detector.detect_os()
+        pkg_manager = os_info.get("pkg_manager")
+        if not pkg_manager or pkg_manager not in self.detector.PKG_MANAGERS:
+            print(f"  ⚠ Пакетный менеджер не определён для {os_info.get('distro', '?')}")
+            return False
+
+        pm_info = self.detector.PKG_MANAGERS[pkg_manager]
+        pyqt6_pkg = pm_info["pyqt6_package"]
+        cmd = pm_info["install_cmd"][:]
+        if pm_info["noconfirm_flag"]:
+            cmd.append(pm_info["noconfirm_flag"])
+        cmd.append(pyqt6_pkg)
+
+        print(f"  Системный PyQt6 не найден.")
+        print(f"  Команда установки: {' '.join(cmd)}")
+        reply = input("  Установить системный PyQt6? (sudo) [Y/n]: ").strip().lower()
+        if reply not in ('', 'y', 'yes', 'да'):
+            print("  ⏭ Пропущено")
+            return False
+
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=600
+            )
+            if result.returncode != 0:
+                print(f"  ❌ Ошибка установки: {result.stderr.strip()[:200]}")
+                return False
+        except Exception as e:
+            print(f"  ❌ Ошибка установки: {e}")
+            return False
+
+        # Повторная проверка: PyQt6 реально работает (глубокий импорт)
+        sys_pyqt6 = self.detector.detect_system_pyqt6()
+        if sys_pyqt6.get("installed") and sys_pyqt6.get("works"):
+            print(f"  ✅ Системный PyQt6 работает ({sys_pyqt6.get('version', '')})")
+            return True
+        else:
+            print("  ❌ PyQt6 установлен, но не работает на этом CPU "
+                  "(возможно, сборка требует SSE4.2/AVX)")
+            return False
+
     def is_installed(self) -> StepStatus:
         """Проверяет, создан ли venv и установлены ли зависимости.
         ГЛУБОКАЯ проверка PyQt6 (from PyQt6.QtWidgets import QApplication),
@@ -134,11 +180,16 @@ class StepEnv(InstallStep):
         """Создаёт venv и устанавливает базовые зависимости."""
         # 0. Проверяем стратегию
         if self._strategy == "none":
-            return StepStatus.failed(
-                "Не удалось определить способ установки PyQt6. "
-                "Процессор не поддерживает sse4_2/popcnt, "
-                "и системный PyQt6 не найден или не работает."
-            )
+            # Старый CPU без системного PyQt6 — пробуем установить
+            print("  Процессор без sse4_2/popcnt, системный PyQt6 не найден.")
+            if self._ensure_system_pyqt6():
+                self._strategy = "system"
+            else:
+                return StepStatus.failed(
+                    "Не удалось определить способ установки PyQt6. "
+                    "Процессор не поддерживает sse4_2/popcnt, "
+                    "и системный PyQt6 не найден или не работает."
+                )
 
         # 1. Находим Python для venv
         self._report(progress, 10,

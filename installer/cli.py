@@ -56,6 +56,8 @@ def main():
     python_info = detection["python"]
 
     print(f"  ОС: {os_info['distro']} ({os_info['family']})")
+    pkg_mgr = os_info.get('pkg_manager') or 'не определён'
+    print(f"  Пакетный менеджер: {pkg_mgr}")
     print(f"  CPU: {cpu_info['model']} ({cpu_info['cores']} ядер)")
     print(f"  RAM: {ram_info['total_gb']:.1f} GB "
           f"(доступно {ram_info['available_gb']:.1f} GB)")

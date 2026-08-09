@@ -32,6 +32,7 @@ class Advisor:
             "ollama": self._advise_ollama(detection),
             "sdxl": self._advise_sdxl(detection),
             "warnings": self._collect_warnings(detection),
+            "pkg_manager": detection.get("os", {}).get("pkg_manager", "unknown"),
         }
 
     # === Python ===
@@ -222,22 +223,23 @@ class Advisor:
     def _recommend_sdxl_models(self, ram_gb: float, has_cuda: bool,
                                 has_avx2: bool, cores: int) -> dict:
         """Рекомендации SDXL-моделей на основе железа."""
-        # Базовая рекомендация — всегда SDXL Base
-        recommended = "stabilityai/stable-diffusion-xl-base-1.0"
+        # Базовая рекомендация — Dreamshaper XL Turbo (без лицензии HF, скачивается сразу)
+        # SDXL Base требует принятия лицензии через веб-интерфейс HF — оставлен в альтернативах
+        recommended = "Lykon/dreamshaper-xl-v2-turbo"
         
         alternatives = [
-            {
-                "name": "stabilityai/stable-diffusion-xl-base-1.0",
-                "display_name": "SDXL Base 1.0",
-                "size_gb": 6.5,
-                "note": "✅ Стандартная модель, универсальная",
-                "recommended": True,
-            },
             {
                 "name": "Lykon/dreamshaper-xl-v2-turbo",
                 "display_name": "Dreamshaper XL v2 Turbo",
                 "size_gb": 6.5,
-                "note": "🎨 Художественный стиль, быстрее base",
+                "note": "🎨 Художественный стиль, быстрее base, без лицензии HF",
+                "recommended": True,
+            },
+            {
+                "name": "stabilityai/stable-diffusion-xl-base-1.0",
+                "display_name": "SDXL Base 1.0",
+                "size_gb": 6.5,
+                "note": "✅ Стандартная модель, универсальная. ⚠ Требует принятия лицензии HF",
             },
             {
                 "name": "RunDiffusion/Juggernaut-XL-v9",
