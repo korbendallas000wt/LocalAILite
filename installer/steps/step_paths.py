@@ -165,6 +165,8 @@ class StepPaths(InstallStep):
     def _write_config_values(self, values: dict) -> bool:
         """Записывает значения в QSettings через venv python."""
         if not os.path.exists(self.venv_python):
+            print("  ⚠ venv не создан — пути нельзя записать.")
+            print("     Сначала выполните шаг 3 (создание окружения приложения).")
             return False
         lines = ["from utils.config import Config; c = Config()"]
         for key, value in values.items():

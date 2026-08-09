@@ -132,7 +132,7 @@ class StepEnv(InstallStep):
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=600
+                cmd, capture_output=True, encoding='utf-8', errors='replace', timeout=600
             )
             if result.returncode != 0:
                 print(f"  ❌ Ошибка установки: {result.stderr.strip()[:200]}")

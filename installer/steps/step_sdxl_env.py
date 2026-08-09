@@ -27,6 +27,16 @@ class StepSdxlEnv(InstallStep):
     name = "SDXL окружение"
     description = "Создание venv для SDXL + установка torch, diffusers (~6 GB)"
 
+    # Пакеты Python 3.12 по пакетным менеджерам (для автоустановки)
+    PYTHON_312_PACKAGES = {
+        "pacman": "python312",           # AUR; на Manjaro обычно есть pyenv
+        "apt": "python3.12 python3.12-venv python3.12-dev",
+        "dnf": "python3.12 python3.12-devel",
+        "zypper": "python312 python312-devel",
+        "emerge": "dev-lang/python:3.12",
+        "xbps": "python3.12",
+    }
+
     # Зависимости для SDXL (torch устанавливается отдельно с правильным index-url)
     SDXL_PACKAGES = [
         "diffusers",
@@ -100,17 +110,56 @@ class StepSdxlEnv(InstallStep):
         }
 
     def _find_python_for_sdxl(self):
-        """Находит совместимый Python (3.10-3.12) для SDXL venv."""
+        """Находит совместимый Python (3.10-3.12) для SDXL venv.
+        Возвращает None, если совместимого нет (без fallback на несовместимый).
+        """
         detection = self.detector.detect_python()
         if detection.get("has_compatible") and detection.get("compatible"):
             return detection["compatible"][0]["path"]
-        # Fallback: любой найденный Python
-        for cand in detection.get("candidates", []):
-            if cand.get("source") == "path":
-                return cand["path"]
-        if detection.get("candidates"):
-            return detection["candidates"][0]["path"]
         return None
+
+    def _ensure_compatible_python(self) -> str:
+        """Пытается установить Python 3.12 через пакетный менеджер.
+        Возвращает путь к совместимому Python или None.
+        """
+        os_info = self.detector.detect_os()
+        pkg_manager = os_info.get("pkg_manager")
+        if not pkg_manager or pkg_manager not in self.PYTHON_312_PACKAGES:
+            print(f"  ⚠ Пакетный менеджер не определён или не поддерживается")
+            return None
+
+        py312_pkg = self.PYTHON_312_PACKAGES[pkg_manager]
+        pm_info = self.detector.PKG_MANAGERS.get(pkg_manager, {})
+        install_cmd = pm_info.get("install_cmd", [])
+        noconfirm = pm_info.get("noconfirm_flag", "")
+
+        cmd = install_cmd[:]
+        if noconfirm:
+            cmd.append(noconfirm)
+        cmd.extend(py312_pkg.split())
+
+        print(f"  Совместимый Python (3.10-3.12) не найден.")
+        print(f"  Системный Python несовместим с torch/diffusers.")
+        print(f"  Команда установки: {' '.join(cmd)}")
+        reply = input("  Установить Python 3.12? (sudo) [Y/n]: ").strip().lower()
+        if reply not in ('', 'y', 'yes', 'да'):
+            print("  ⏭ Пропущено")
+            return None
+
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, encoding='utf-8', errors='replace', timeout=600
+            )
+            if result.returncode != 0:
+                print(f"  ❌ Ошибка установки: {result.stderr.strip()[:200]}")
+                return None
+        except Exception as e:
+            print(f"  ❌ Ошибка установки: {e}")
+            return None
+
+        # Повторная детекция: ищем установленный Python 3.12
+        print("  Поиск установленного Python 3.12...")
+        return self._find_python_for_sdxl()
 
     def _get_torch_index_url(self) -> str:
         """Выбирает URL для torch на основе детекции GPU.
@@ -158,9 +207,11 @@ class StepSdxlEnv(InstallStep):
                     f"SDXL venv готов ({paths['venv_path']})",
                     details=result.stdout.strip()
                 )
+            error_details = result.stderr.strip()[:300]
+            print(f"  ❌ Детали ошибки: {error_details}")
             return StepStatus.failed(
                 "SDXL venv создан, но torch/diffusers не работают",
-                details=result.stderr.strip()[:200]
+                details=error_details
             )
         except Exception as e:
             return StepStatus.failed(f"Ошибка проверки SDXL venv: {e}")
@@ -173,9 +224,13 @@ class StepSdxlEnv(InstallStep):
         self._report(progress, 5, "Поиск совместимого Python (3.10-3.12)...")
         python_bin = self._find_python_for_sdxl()
         if not python_bin:
-            return StepStatus.failed(
-                "Не найден совместимый Python (3.10-3.12) для SDXL venv"
-            )
+            # Совместимого нет — пробуем установить через пакетный менеджер
+            python_bin = self._ensure_compatible_python()
+            if not python_bin:
+                return StepStatus.failed(
+                    "Не найден совместимый Python (3.10-3.12) для SDXL venv. "
+                    "Установите Python 3.12 вручную и повторите установку."
+                )
         self._report(progress, 10, f"Python: {python_bin}")
 
         # 2. Создаём venv
@@ -251,9 +306,11 @@ class StepSdxlEnv(InstallStep):
                 capture_output=True, text=True, timeout=30
             )
             if result.returncode != 0:
+                error_details = result.stderr.strip()[:300]
+                print(f"  ❌ Детали ошибки: {error_details}")
                 return StepStatus.failed(
                     "torch/diffusers установлены, но не работают",
-                    details=result.stderr.strip()[:200]
+                    details=error_details
                 )
         except Exception as e:
             return StepStatus.failed(f"Ошибка проверки: {e}")

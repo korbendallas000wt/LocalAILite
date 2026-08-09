@@ -27,7 +27,7 @@ class StepOllama(InstallStep):
     description = "Скачивание и установка Ollama (~2.1 GB)"
 
     # URL для скачивания (linux-amd64 tgz)
-    OLLAMA_RELEASE_URL = "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64.tgz"
+    OLLAMA_RELEASE_URL = "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64.tar.zst"
 
     def __init__(self, base_dir: str = None):
         if base_dir is None:
@@ -187,6 +187,53 @@ class StepOllama(InstallStep):
 
         return False
 
+    def _apply_selinux_context(self, binary_path: str, lib_path: str):
+        """Снимает SELinux-ограничения с бинарника Ollama (если SELinux активен).
+        На Fedora/RHEL с SELinux Enforcing скачанные из интернета бинарники
+        блокируются. chcon устанавливает правильную SELinux-метку.
+        """
+        # Проверяем, активен ли SELinux
+        try:
+            result = subprocess.run(
+                ["getenforce"], capture_output=True, text=True, timeout=5
+            )
+            selinux_status = result.stdout.strip().lower()
+            if selinux_status != "enforcing":
+                return  # SELinux не активен или в permissive режиме
+        except Exception:
+            return  # getenforce не найден (не Fedora/RHEL)
+
+        # SELinux Enforcing — предлагаем снять ограничения
+        print(f"  ⚠ SELinux Enforcing обнаружен.")
+        print(f"  Бинарник Ollama скачан из интернета и может быть заблокирован.")
+        reply = input("  Снять SELinux-ограничения через chcon? (sudo) [Y/n]: ").strip().lower()
+        if reply not in ('', 'y', 'yes', 'да'):
+            print("  ⏭ Пропущено (возможны проблемы с запуском)")
+            return
+
+        # Применяем chcon к бинарнику
+        try:
+            result = subprocess.run(
+                ["sudo", "chcon", "-t", "bin_t", binary_path],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                print(f"  ✅ SELinux-контекст бинарника установлен (bin_t)")
+            else:
+                print(f"  ⚠ chcon не сработал: {result.stderr.strip()[:100]}")
+        except Exception as e:
+            print(f"  ⚠ Ошибка chcon: {e}")
+
+        # Применяем chcon к библиотекам (если есть)
+        if os.path.isdir(lib_path):
+            try:
+                subprocess.run(
+                    ["sudo", "chcon", "-R", "-t", "lib_t", lib_path],
+                    capture_output=True, text=True, timeout=10
+                )
+            except Exception:
+                pass
+
     def is_installed(self) -> StepStatus:
         """Проверяет, установлен ли Ollama."""
         paths = self._get_paths()
@@ -216,7 +263,7 @@ class StepOllama(InstallStep):
         os.makedirs(install_dir, exist_ok=True)
 
         # 2. Скачиваем архив
-        archive_path = os.path.join(install_dir, "ollama-linux-amd64.tgz")
+        archive_path = os.path.join(install_dir, "ollama-linux-amd64.tar.zst")
         self._report(progress, 10, f"Скачивание Ollama (~2.1 GB)...")
         if not self._download_with_progress(self.OLLAMA_RELEASE_URL, archive_path, progress):
             return StepStatus.failed(
@@ -224,11 +271,19 @@ class StepOllama(InstallStep):
                 details=f"URL: {self.OLLAMA_RELEASE_URL}"
             )
 
+        # Проверка размера файла (защита от HTML-ошибок вместо архива)
+        file_size = os.path.getsize(archive_path) if os.path.exists(archive_path) else 0
+        if file_size < 1024 * 1024:  # < 1 MB — точно не архив Ollama (~2.1 GB)
+            return StepStatus.failed(
+                f"Скачанный файл слишком мал ({file_size} байт) — вероятно, это HTML-ошибка, а не архив",
+                details=f"URL: {self.OLLAMA_RELEASE_URL}"
+            )
+
         # 3. Распаковываем
         self._report(progress, 60, "Распаковка архива...")
         try:
             result = subprocess.run(
-                ["tar", "-xzf", archive_path, "-C", install_dir],
+                ["tar", "-xf", archive_path, "-C", install_dir],
                 capture_output=True, text=True, timeout=300
             )
             if result.returncode != 0:
@@ -254,6 +309,9 @@ class StepOllama(InstallStep):
                 "Бинарник ollama не найден после распаковки",
                 details=f"Ожидался: {paths['ollama_bin']}"
             )
+
+        # 5.5. SELinux: снимаем ограничения с бинарника (Fedora, RHEL)
+        self._apply_selinux_context(paths['ollama_bin'], paths['lib_path'])
 
         # 6. Проверяем работоспособность
         self._report(progress, 90, "Проверка работоспособности...")

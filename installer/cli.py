@@ -44,6 +44,7 @@ def print_step(text):
 
 def main():
     print_header("LocalAILite — бутстрап (уровень 1)")
+    step_results = {}  # Сбор статусов шагов для честного итога
 
     # 1. Детекция системы
     print_step("Шаг 0: Диагностика системы")
@@ -98,6 +99,7 @@ def main():
     )
     icon = "✅" if result.ok else ("⏭" if result.skipped else "❌")
     print(f"  {icon} {result.message}")
+    step_results["step_config"] = {"name": "Структура данных", "ok": result.ok, "skipped": result.skipped, "message": result.message}
 
     # 4. Шаг окружения (venv)
     print_step("Шаг 3: Создание окружения приложения")
@@ -107,6 +109,7 @@ def main():
     )
     icon = "✅" if result.ok else ("⏭" if result.skipped else "❌")
     print(f"  {icon} {result.message}")
+    step_results["step_env"] = {"name": "Окружение приложения", "ok": result.ok, "skipped": result.skipped, "message": result.message}
 
     # 4.5. Запись флагов компонентов в QSettings (через venv python)
     print_step("Шаг 4: Запись флагов компонентов")
@@ -129,12 +132,16 @@ def main():
             )
             if result_flags.returncode == 0:
                 print(f"  ✅ {result_flags.stdout.strip()}")
+                step_results["step_flags"] = {"name": "Запись флагов компонентов", "ok": True, "skipped": False, "message": result_flags.stdout.strip()}
             else:
                 print(f"  ⚠ Ошибка записи флагов: {result_flags.stderr.strip()}")
+                step_results["step_flags"] = {"name": "Запись флагов компонентов", "ok": False, "skipped": False, "message": result_flags.stderr.strip()[:100]}
         else:
             print("  ⏭ venv не найден — флаги не записаны (дефолт: все True)")
+            step_results["step_flags"] = {"name": "Запись флагов компонентов", "ok": True, "skipped": True, "message": "venv не найден (дефолт: все True)"}
     except Exception as e:
         print(f"  ⚠ Ошибка записи флагов: {e}")
+        step_results["step_flags"] = {"name": "Запись флагов компонентов", "ok": False, "skipped": False, "message": str(e)[:100]}
 
     # === УРОВЕНЬ 2: Пути, бинарники, окружения, модели ===
 
@@ -144,6 +151,7 @@ def main():
     paths_status = step_paths.is_installed()
     if paths_status.ok:
         print(f"  ⏭ {paths_status.message}")
+        step_results["step_paths"] = {"name": "Настройка путей", "ok": True, "skipped": True, "message": paths_status.message}
     else:
         reply = input("  Настроить пути сейчас? [Y/n]: ").strip().lower()
         if reply in ('', 'y', 'yes', 'да'):
@@ -154,8 +162,10 @@ def main():
             )
             icon = "✅" if result.ok else "❌"
             print(f"  {icon} {result.message}")
+            step_results["step_paths"] = {"name": "Настройка путей", "ok": result.ok, "skipped": False, "message": result.message}
         else:
             print("  ⏭ Пропущено (пути можно настроить позже через UI)")
+            step_results["step_paths"] = {"name": "Настройка путей", "ok": True, "skipped": True, "message": "Пропущено пользователем"}
 
     # Шаг 6: Бинарник Ollama (только если features/ollama)
     ollama_supported = verdict["ollama"]["supported"]
@@ -165,6 +175,7 @@ def main():
         ollama_status = step_ollama.is_installed()
         if ollama_status.ok:
             print(f"  ⏭ {ollama_status.message}")
+            step_results["step_ollama"] = {"name": "Бинарник Ollama", "ok": True, "skipped": True, "message": ollama_status.message}
         else:
             reply = input("  Установить бинарник Ollama (~2.1 GB)? [Y/n]: ").strip().lower()
             if reply in ('', 'y', 'yes', 'да'):
@@ -173,11 +184,14 @@ def main():
                 )
                 icon = "✅" if result.ok else "❌"
                 print(f"  {icon} {result.message}")
+                step_results["step_ollama"] = {"name": "Бинарник Ollama", "ok": result.ok, "skipped": False, "message": result.message}
             else:
                 print("  ⏭ Пропущено (бинарник можно установить позже)")
+                step_results["step_ollama"] = {"name": "Бинарник Ollama", "ok": True, "skipped": True, "message": "Пропущено пользователем"}
     else:
         print_step("Шаг 6: Бинарник Ollama")
         print(f"  ⏭ Пропущено: {verdict['ollama']['message']}")
+        step_results["step_ollama"] = {"name": "Бинарник Ollama", "ok": True, "skipped": True, "message": verdict['ollama']['message']}
 
     # Шаг 7: SDXL окружение (только если features/sdxl)
     sdxl_supported = verdict["sdxl"]["supported"]
@@ -187,6 +201,7 @@ def main():
         sdxl_env_status = step_sdxl_env.is_installed()
         if sdxl_env_status.ok:
             print(f"  ⏭ {sdxl_env_status.message}")
+            step_results["step_sdxl_env"] = {"name": "SDXL окружение", "ok": True, "skipped": True, "message": sdxl_env_status.message}
         else:
             reply = input("  Создать SDXL окружение (~6 GB)? [Y/n]: ").strip().lower()
             if reply in ('', 'y', 'yes', 'да'):
@@ -195,11 +210,14 @@ def main():
                 )
                 icon = "✅" if result.ok else "❌"
                 print(f"  {icon} {result.message}")
+                step_results["step_sdxl_env"] = {"name": "SDXL окружение", "ok": result.ok, "skipped": False, "message": result.message}
             else:
                 print("  ⏭ Пропущено (SDXL окружение можно создать позже)")
+                step_results["step_sdxl_env"] = {"name": "SDXL окружение", "ok": True, "skipped": True, "message": "Пропущено пользователем"}
     else:
         print_step("Шаг 7: SDXL окружение")
         print(f"  ⏭ Пропущено: {verdict['sdxl']['message']}")
+        step_results["step_sdxl_env"] = {"name": "SDXL окружение", "ok": True, "skipped": True, "message": verdict['sdxl']['message']}
 
     # Шаг 8: Скачивание моделей (только если есть хотя бы один компонент)
     if ollama_supported or sdxl_supported:
@@ -208,6 +226,7 @@ def main():
         models_status = step_models.is_installed()
         if models_status.ok:
             print(f"  ⏭ {models_status.message}")
+            step_results["step_models"] = {"name": "Скачивание моделей", "ok": True, "skipped": True, "message": models_status.message}
         else:
             reply = input("  Скачать модели (рекомендованные советником)? [Y/n]: ").strip().lower()
             if reply in ('', 'y', 'yes', 'да'):
@@ -216,22 +235,36 @@ def main():
                 )
                 icon = "✅" if result.ok else "❌"
                 print(f"  {icon} {result.message}")
+                step_results["step_models"] = {"name": "Скачивание моделей", "ok": result.ok, "skipped": False, "message": result.message}
             else:
                 print("  ⏭ Пропущено (модели можно скачать позже)")
+                step_results["step_models"] = {"name": "Скачивание моделей", "ok": True, "skipped": True, "message": "Пропущено пользователем"}
     else:
         print_step("Шаг 8: Скачивание моделей")
         print("  ⏭ Пропущено: нет поддерживаемых компонентов")
+        step_results["step_models"] = {"name": "Скачивание моделей", "ok": True, "skipped": True, "message": "Нет поддерживаемых компонентов"}
 
-    # 9. Итог
+    # 9. Итог (честный, с анализом статусов шагов)
     print_header("Итог")
-    print("  ✅ Установка завершена!")
-    print("  Запуск приложения:")
-    print("     venv/bin/python main.py")
-    print()
-    print("  Компоненты:")
-    print(f"     Ollama: {'✅ поддерживается' if ollama_supported else '❌ не поддерживается'}")
-    print(f"     SDXL:   {'✅ поддерживается' if sdxl_supported else '❌ не поддерживается'}")
-    print(f"     Visual editor: ✅ всегда доступен")
+    failed_steps = [k for k, v in step_results.items() if not v.get("ok") and not v.get("skipped")]
+    if failed_steps:
+        print(f"  ⚠ Установка завершена с ошибками ({len(failed_steps)} из {len(step_results)} шагов провалились)")
+        print()
+        print("  Проваленные шаги:")
+        for step_id in failed_steps:
+            s = step_results[step_id]
+            print(f"     ❌ {s['name']}: {s['message']}")
+        print()
+        print("  Повторите установку после исправления проблем.")
+    else:
+        print("  ✅ Установка завершена!")
+        print("  Запуск приложения:")
+        print("     venv/bin/python main.py")
+        print()
+        print("  Компоненты:")
+        print(f"     Ollama: {'✅ поддерживается' if ollama_supported else '❌ не поддерживается'}")
+        print(f"     SDXL:   {'✅ поддерживается' if sdxl_supported else '❌ не поддерживается'}")
+        print(f"     Visual editor: ✅ всегда доступен")
 
 
 if __name__ == "__main__":

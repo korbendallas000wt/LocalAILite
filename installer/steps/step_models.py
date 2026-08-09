@@ -400,7 +400,7 @@ except Exception as e:
             return StepStatus.failed(f"Ошибка скачивания SDXL модели: {e}")
 
     def install(self, progress=None) -> StepStatus:
-        """Скачивает модели."""
+        """Скачивает модели (независимые компоненты Ollama и SDXL)."""
         paths = self._get_paths()
         
         # Определяем, какие модели качать
@@ -429,45 +429,84 @@ except Exception as e:
         
         self._report(progress, 5, f"Проверка диска: {disk_check['message']}")
         
-        # Скачиваем Ollama модель
+        # Флаги успеха для независимых компонентов
+        ollama_success = True
+        ollama_error = ""
+        sdxl_success = True
+        sdxl_error = ""
+        
+        # Скачиваем Ollama модель (независимо от SDXL)
         if ollama_installed and self.ollama_model:
             ollama_bin = self._find_ollama_binary()
             if not ollama_bin:
-                return StepStatus.failed("Ollama бинарник не найден. Сначала выполните step_ollama.")
-            
-            # Проверяем, не установлена ли уже модель
-            # Сканируем папку моделей напрямую (не требует сервера)
-            existing_models = self._list_ollama_models(paths['ollama_models_path'])
-            if self.ollama_model in existing_models:
-                self._report(progress, 20, f"Ollama модель {self.ollama_model} уже установлена")
+                print("  ⚠ Ollama бинарник не найден — пропускаем модели Ollama")
+                ollama_success = False
+                ollama_error = "Ollama бинарник не найден. Сначала выполните step_ollama."
             else:
-                result = self._pull_ollama_model(ollama_bin, self.ollama_model, paths['ollama_models_path'], progress)
-                if not result.ok:
-                    return result
+                # Проверяем, не установлена ли уже модель
+                # Сканируем папку моделей напрямую (не требует сервера)
+                existing_models = self._list_ollama_models(paths['ollama_models_path'])
+                if self.ollama_model in existing_models:
+                    self._report(progress, 20, f"Ollama модель {self.ollama_model} уже установлена")
+                else:
+                    result = self._pull_ollama_model(ollama_bin, self.ollama_model, paths['ollama_models_path'], progress)
+                    if not result.ok:
+                        print(f"  ⚠ Ollama модель не скачана: {result.message}")
+                        ollama_success = False
+                        ollama_error = result.message
         
-        # Скачиваем SDXL модель
+        # Скачиваем SDXL модель (независимо от Ollama)
         if sdxl_installed and self.sdxl_model:
             sdxl_python = self._get_sdxl_python()
             if not sdxl_python:
-                return StepStatus.failed("SDXL venv не найден. Сначала выполните step_sdxl_env.")
-            
-            models_path = paths['models_path']
-            
-            # Проверяем, не установлена ли уже модель
-            existing_models = self._list_sdxl_models(models_path)
-            # Ищем модель по имени репозитория (например, "models--stabilityai--sdxl-base-1.0")
-            repo_folder_name = "models--" + self.sdxl_model.replace("/", "--")
-            model_found = any(repo_folder_name in m for m in existing_models)
-            
-            if model_found:
-                self._report(progress, 60, f"SDXL модель {self.sdxl_model} уже установлена")
+                print("  ⚠ SDXL venv не найден — пропускаем модели SDXL")
+                sdxl_success = False
+                sdxl_error = "SDXL venv не найден. Сначала выполните step_sdxl_env."
             else:
-                result = self._download_sdxl_model(sdxl_python, self.sdxl_model, models_path, progress)
-                if not result.ok:
-                    return result
+                models_path = paths['models_path']
+                
+                # Проверяем, не установлена ли уже модель
+                existing_models = self._list_sdxl_models(models_path)
+                # Ищем модель по имени репозитория (например, "models--stabilityai--sdxl-base-1.0")
+                repo_folder_name = "models--" + self.sdxl_model.replace("/", "--")
+                model_found = any(repo_folder_name in m for m in existing_models)
+                
+                if model_found:
+                    self._report(progress, 60, f"SDXL модель {self.sdxl_model} уже установлена")
+                else:
+                    result = self._download_sdxl_model(sdxl_python, self.sdxl_model, models_path, progress)
+                    if not result.ok:
+                        print(f"  ⚠ SDXL модель не скачана: {result.message}")
+                        sdxl_success = False
+                        sdxl_error = result.message
         
-        self._report(progress, 100, "Модели скачаны")
-        return StepStatus.success("Модели скачаны")
+        # Сводный статус (независимые компоненты)
+        if ollama_success and sdxl_success:
+            self._report(progress, 100, "Все модели скачаны")
+            return StepStatus.success("Модели скачаны")
+        elif ollama_success or sdxl_success:
+            # Частичный успех
+            success_parts = []
+            if ollama_success and ollama_installed and self.ollama_model:
+                success_parts.append("Ollama")
+            if sdxl_success and sdxl_installed and self.sdxl_model:
+                success_parts.append("SDXL")
+            self._report(progress, 100, f"Часть моделей скачана: {', '.join(success_parts)}")
+            return StepStatus.success(
+                f"Часть моделей скачана: {', '.join(success_parts)}",
+                details="Повторите установку для скачивания оставшихся моделей"
+            )
+        else:
+            # Оба провалились
+            errors = []
+            if ollama_error:
+                errors.append(f"Ollama: {ollama_error}")
+            if sdxl_error:
+                errors.append(f"SDXL: {sdxl_error}")
+            return StepStatus.failed(
+                "Ни одна модель не скачана",
+                details="; ".join(errors)
+            )
 
     def verify(self) -> StepStatus:
         """Проверяет после установки."""
