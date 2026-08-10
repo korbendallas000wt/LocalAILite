@@ -177,6 +177,10 @@ def _is_registry_up_to_date(registry: dict, models_path: str) -> bool:
         path_norm = os.path.normpath(path)
         if not path_norm.startswith(models_path_norm + os.sep) and path_norm != models_path_norm:
             return False
+    # Проверка состава моделей: не добавились ли новые модели в папку
+    current_registry = scan_models_folder(models_path)
+    if set(registry.keys()) != set(current_registry.keys()):
+        return False
     return True
 
 

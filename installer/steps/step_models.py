@@ -332,11 +332,17 @@ class StepModels(InstallStep):
                         self._report(progress, 20 + int(pct * 0.7), f"Ollama: {pct}%")
                         last_pct = pct
                 elif "verifying" in line.lower():
-                    self._report(progress, 92, "Ollama: проверка контрольной суммы")
+                    if last_pct < 92:
+                        self._report(progress, 92, "Ollama: проверка контрольной суммы")
+                        last_pct = 92
                 elif "writing" in line.lower():
-                    self._report(progress, 96, "Ollama: запись манифеста")
+                    if last_pct < 96:
+                        self._report(progress, 96, "Ollama: запись манифеста")
+                        last_pct = 96
                 elif "success" in line.lower():
-                    self._report(progress, 100, f"Ollama: модель {model_name} скачана")
+                    if last_pct < 100:
+                        self._report(progress, 100, f"Ollama: модель {model_name} скачана")
+                        last_pct = 100
             
             proc.wait()
             if proc.returncode == 0:

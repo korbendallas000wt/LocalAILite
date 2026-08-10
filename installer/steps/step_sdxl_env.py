@@ -37,16 +37,6 @@ class StepSdxlEnv(InstallStep):
         "xbps": "python3.12",
     }
 
-    # Зависимости для SDXL (torch устанавливается отдельно с правильным index-url)
-    SDXL_PACKAGES = [
-        "diffusers",
-        "transformers",
-        "accelerate",
-        "safetensors",
-        "pillow",
-        "numpy<2",
-    ]
-
     def __init__(self, base_dir: str = None):
         if base_dir is None:
             base_dir = self._find_project_root()
@@ -282,7 +272,7 @@ class StepSdxlEnv(InstallStep):
         diffusers_cmd = [
             paths['python_path'], "-m", "pip", "install",
             "diffusers", "transformers", "accelerate",
-            "safetensors", "pillow", "numpy"
+            "safetensors", "pillow", "numpy<2"
         ]
         try:
             result = subprocess.run(
