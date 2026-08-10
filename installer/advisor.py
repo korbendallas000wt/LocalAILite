@@ -231,26 +231,26 @@ class Advisor:
             {
                 "name": "Lykon/dreamshaper-xl-v2-turbo",
                 "display_name": "Dreamshaper XL v2 Turbo",
-                "size_gb": 6.5,
+                "size_gb": 10.0,
                 "note": "🎨 Художественный стиль, быстрее base, без лицензии HF",
                 "recommended": True,
             },
             {
                 "name": "stabilityai/stable-diffusion-xl-base-1.0",
                 "display_name": "SDXL Base 1.0",
-                "size_gb": 6.5,
+                "size_gb": 10.0,
                 "note": "✅ Стандартная модель, универсальная. ⚠ Требует принятия лицензии HF",
             },
             {
                 "name": "RunDiffusion/Juggernaut-XL-v9",
                 "display_name": "Juggernaut XL v9",
-                "size_gb": 6.5,
+                "size_gb": 10.0,
                 "note": "📸 Фотореализм, высокое качество",
             },
             {
                 "name": "stabilityai/stable-diffusion-xl-refiner-1.0",
                 "display_name": "SDXL Refiner 1.0",
-                "size_gb": 6.2,
+                "size_gb": 10.0,
                 "note": "🔧 Улучшает детали (используется вместе с Base)",
             },
         ]

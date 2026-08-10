@@ -11,6 +11,7 @@ installer/steps/step_models.py — шаг скачивания моделей (�
 import os
 import subprocess
 import shutil
+import re
 
 try:
     from installer.steps.base import InstallStep, StepStatus
@@ -316,20 +317,26 @@ class StepModels(InstallStep):
                 text=True, env=env
             )
             
-            # Читаем вывод построчно
+            # Читаем вывод построчно, фильтруем прогресс (выводим только при изменении на >=10%)
             last_pct = 0
             for line in proc.stdout:
                 line = line.strip()
-                if line:
-                    # Парсим прогресс из вывода ollama pull
-                    if "pulling" in line.lower() or "downloading" in line.lower():
-                        self._report(progress, 30, f"Ollama: {line[:60]}")
-                    elif "verifying" in line.lower():
-                        self._report(progress, 70, f"Ollama: {line[:60]}")
-                    elif "writing" in line.lower():
-                        self._report(progress, 90, f"Ollama: {line[:60]}")
-                    elif "success" in line.lower():
-                        self._report(progress, 100, f"Ollama: модель {model_name} скачана")
+                if not line:
+                    continue
+                
+                # Парсим процент из строки прогресса
+                match = re.search(r'(\d+)%', line)
+                if match:
+                    pct = int(match.group(1))
+                    if pct >= last_pct + 10:
+                        self._report(progress, 20 + int(pct * 0.7), f"Ollama: {pct}%")
+                        last_pct = pct
+                elif "verifying" in line.lower():
+                    self._report(progress, 92, "Ollama: проверка контрольной суммы")
+                elif "writing" in line.lower():
+                    self._report(progress, 96, "Ollama: запись манифеста")
+                elif "success" in line.lower():
+                    self._report(progress, 100, f"Ollama: модель {model_name} скачана")
             
             proc.wait()
             if proc.returncode == 0:
@@ -364,7 +371,21 @@ try:
     from huggingface_hub import snapshot_download
     snapshot_download(
         repo_id='{repo_id}',
-        cache_dir='{models_path}'
+        cache_dir='{models_path}',
+        allow_patterns=[
+            "model_index.json",
+            "scheduler/*",
+            "text_encoder/config.json",
+            "text_encoder/model.safetensors",
+            "text_encoder_2/config.json",
+            "text_encoder_2/model.safetensors",
+            "tokenizer/*",
+            "tokenizer_2/*",
+            "unet/config.json",
+            "unet/diffusion_pytorch_model.safetensors",
+            "vae/config.json",
+            "vae/diffusion_pytorch_model.safetensors",
+        ]
     )
     print('SDXL_MODEL_DOWNLOADED')
 except Exception as e:

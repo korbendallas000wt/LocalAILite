@@ -42,7 +42,7 @@ class PathsManager:
         "ollama_binary": 2.1,
         "ollama_models": 4.5,
         "sdxl_venv": 6.0,
-        "sdxl_models": 6.5,
+        "sdxl_models": 10.0,
         "sdxl_output": 0.5,
     }
 

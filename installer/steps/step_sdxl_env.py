@@ -44,7 +44,7 @@ class StepSdxlEnv(InstallStep):
         "accelerate",
         "safetensors",
         "pillow",
-        "numpy",
+        "numpy<2",
     ]
 
     def __init__(self, base_dir: str = None):
