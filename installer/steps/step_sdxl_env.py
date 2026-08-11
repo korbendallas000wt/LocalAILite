@@ -190,7 +190,7 @@ class StepSdxlEnv(InstallStep):
                  "import torch; print(f'torch {torch.__version__}'); "
                  "from diffusers import StableDiffusionXLPipeline; "
                  "print('diffusers OK')"],
-                capture_output=True, text=True, timeout=30
+                capture_output=True, text=True, timeout=120  # Увеличен для CPU-only (torch долго грузится на старых CPU)
             )
             if result.returncode == 0:
                 return StepStatus.success(
@@ -293,7 +293,7 @@ class StepSdxlEnv(InstallStep):
                  "import torch; print(f'torch {torch.__version__}'); "
                  "from diffusers import StableDiffusionXLPipeline; "
                  "print('diffusers OK')"],
-                capture_output=True, text=True, timeout=30
+                capture_output=True, text=True, timeout=120  # Увеличен для CPU-only (torch долго грузится на старых CPU)
             )
             if result.returncode != 0:
                 error_details = result.stderr.strip()[:300]

@@ -18,6 +18,14 @@ try:
 except ImportError:
     from steps.base import InstallStep, StepStatus
 
+try:
+    from core.model_validator import validate_ollama_model, validate_model
+except ImportError:
+    _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    if _project_root not in sys.path:
+        sys.path.insert(0, _project_root)
+    from core.model_validator import validate_ollama_model, validate_model
+
 
 class StepModels(InstallStep):
     """Скачивание моделей Ollama и SDXL."""
@@ -474,13 +482,43 @@ except Exception as e:
                 # Сканируем папку моделей напрямую (не требует сервера)
                 existing_models = self._list_ollama_models(paths['ollama_models_path'])
                 if self.ollama_model in existing_models:
-                    self._report(progress, 20, f"Ollama модель {self.ollama_model} уже установлена")
+                    # Проверяем целостность уже установленной модели
+                    validation = validate_ollama_model(self.ollama_model, paths['ollama_models_path'])
+                    if validation.valid:
+                        self._report(progress, 20, f"Ollama модель {self.ollama_model} уже установлена и валидна")
+                    else:
+                        print(f"  ⚠ Модель {self.ollama_model} битая: {validation.errors[:2]}")
+                        self._report(progress, 18, f"Ollama модель {self.ollama_model} битая — перекачиваем")
+                        # Удаляем битую модель через ollama rm
+                        try:
+                            subprocess.run([ollama_bin, "rm", self.ollama_model],
+                                           capture_output=True, timeout=60)
+                        except Exception:
+                            pass
+                        # Скачиваем заново
+                        result = self._pull_ollama_model(ollama_bin, self.ollama_model, paths['ollama_models_path'], progress)
+                        if not result.ok:
+                            print(f"  ⚠ Ollama модель не скачана: {result.message}")
+                            ollama_success = False
+                            ollama_error = result.message
+                        else:
+                            # Проверяем целостность после скачивания
+                            post_validation = validate_ollama_model(self.ollama_model, paths['ollama_models_path'])
+                            if not post_validation.valid:
+                                ollama_success = False
+                                ollama_error = f"Модель скачалась, но не прошла проверку: {post_validation.errors[0] if post_validation.errors else 'неизвестная ошибка'}"
                 else:
                     result = self._pull_ollama_model(ollama_bin, self.ollama_model, paths['ollama_models_path'], progress)
                     if not result.ok:
                         print(f"  ⚠ Ollama модель не скачана: {result.message}")
                         ollama_success = False
                         ollama_error = result.message
+                    else:
+                        # Проверяем целостность после скачивания
+                        post_validation = validate_ollama_model(self.ollama_model, paths['ollama_models_path'])
+                        if not post_validation.valid:
+                            ollama_success = False
+                            ollama_error = f"Модель скачалась, но не прошла проверку: {post_validation.errors[0] if post_validation.errors else 'неизвестная ошибка'}"
         
         # Скачиваем SDXL модель (независимо от Ollama)
         if sdxl_installed and self.sdxl_model:
@@ -499,13 +537,53 @@ except Exception as e:
                 model_found = any(repo_folder_name in m for m in existing_models)
                 
                 if model_found:
-                    self._report(progress, 60, f"SDXL модель {self.sdxl_model} уже установлена")
+                    # Находим точное имя папки модели
+                    model_dir_name = None
+                    for m in existing_models:
+                        if repo_folder_name in m:
+                            model_dir_name = m
+                            break
+                    model_path = os.path.join(models_path, model_dir_name) if model_dir_name else None
+                    
+                    # Проверяем целостность уже установленной модели
+                    if model_path:
+                        validation = validate_model(model_path)
+                        if validation.valid:
+                            self._report(progress, 60, f"SDXL модель {self.sdxl_model} уже установлена и валидна")
+                        else:
+                            print(f"  ⚠ Модель {self.sdxl_model} битая: {validation.errors[:2]}")
+                            self._report(progress, 58, f"SDXL модель {self.sdxl_model} битая — перекачиваем")
+                            # Удаляем битую модель
+                            shutil.rmtree(model_path, ignore_errors=True)
+                            # Скачиваем заново
+                            result = self._download_sdxl_model(sdxl_python, self.sdxl_model, models_path, progress)
+                            if not result.ok:
+                                print(f"  ⚠ SDXL модель не скачана: {result.message}")
+                                sdxl_success = False
+                                sdxl_error = result.message
+                            else:
+                                # Проверяем целостность после скачивания
+                                post_validation = validate_model(model_path)
+                                if not post_validation.valid:
+                                    sdxl_success = False
+                                    sdxl_error = f"Модель скачалась, но не прошла проверку: {post_validation.errors[0] if post_validation.errors else 'неизвестная ошибка'}"
+                    else:
+                        self._report(progress, 60, f"SDXL модель {self.sdxl_model} уже установлена")
                 else:
                     result = self._download_sdxl_model(sdxl_python, self.sdxl_model, models_path, progress)
                     if not result.ok:
                         print(f"  ⚠ SDXL модель не скачана: {result.message}")
                         sdxl_success = False
                         sdxl_error = result.message
+                    else:
+                        # Проверяем целостность после скачивания
+                        model_dir_name = "models--" + self.sdxl_model.replace("/", "--")
+                        model_path = os.path.join(models_path, model_dir_name)
+                        if os.path.exists(model_path):
+                            post_validation = validate_model(model_path)
+                            if not post_validation.valid:
+                                sdxl_success = False
+                                sdxl_error = f"Модель скачалась, но не прошла проверку: {post_validation.errors[0] if post_validation.errors else 'неизвестная ошибка'}"
         
         # Сводный статус (независимые компоненты)
         if ollama_success and sdxl_success:
