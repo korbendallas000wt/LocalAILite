@@ -220,12 +220,13 @@ class StepModels(InstallStep):
         return models
 
     def is_installed(self) -> StepStatus:
-        """Проверяет, установлены ли модели."""
+        """Проверяет, установлены ли модели и валидны ли они."""
         paths = self._get_paths()
         ollama_installed = self._get_feature("ollama")
         sdxl_installed = self._get_feature("sdxl")
         
         missing = []
+        invalid = []
         
         # Проверяем Ollama
         if ollama_installed:
@@ -234,12 +235,25 @@ class StepModels(InstallStep):
             ollama_models = self._list_ollama_models(paths['ollama_models_path'])
             if not ollama_models:
                 missing.append("Ollama модели")
+            else:
+                # Проверяем целостность каждой модели
+                for model_name in ollama_models:
+                    validation = validate_ollama_model(model_name, paths['ollama_models_path'])
+                    if not validation.valid:
+                        invalid.append(f"Ollama {model_name}: {validation.errors[0] if validation.errors else 'неизвестная ошибка'}")
         
         # Проверяем SDXL
         if sdxl_installed:
             sdxl_models = self._list_sdxl_models(paths['models_path'])
             if not sdxl_models:
                 missing.append("SDXL модели")
+            else:
+                # Проверяем целостность каждой модели
+                for model_name in sdxl_models:
+                    model_path = os.path.join(paths['models_path'], model_name)
+                    validation = validate_model(model_path)
+                    if not validation.valid:
+                        invalid.append(f"SDXL {model_name}: {validation.errors[0] if validation.errors else 'неизвестная ошибка'}")
         
         if missing:
             return StepStatus.failed(
@@ -247,7 +261,13 @@ class StepModels(InstallStep):
                 details="Требуется скачивание моделей"
             )
         
-        return StepStatus.success("Модели установлены")
+        if invalid:
+            return StepStatus.failed(
+                f"Модели битые: {len(invalid)} шт.",
+                details="; ".join(invalid[:3]) + ("..." if len(invalid) > 3 else "")
+            )
+        
+        return StepStatus.success("Модели установлены и валидны")
 
     # === Управление Ollama сервером для скачивания моделей ===
     
