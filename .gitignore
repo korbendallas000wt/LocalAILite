@@ -1,37 +1,67 @@
-# Данные приложения (кроме источников моделей и реестра)
-data/history/
-data/init_images/
-data/logs/
-data/pids/
-data/previews/
-bin/ollama/
-
+```
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-env/
-ENV/
+*.pyc
+*.pyo
+*.pyd
+*.py.class
+*.pyc.class
 
-# IDE
+# Virtual environments
+venv/
+.venv/
+env/
+.ENV/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*
+!.env.example
+
+# IDE specific
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# OS
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
-# Local LLM context files
-full_docs.py
-full_context.py
+# Coverage reports
+.coverage
+htmlcov/
+.coverage.*
+coverage.xml
+*.cover
 
-# Служебные файлы передачи контекста LLM (не для пользователей)
-docs/HANDOFF*.md
+# Testing
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
 
-# Журнал разработки (внутренний документ, не для пользователей)
-WORKLOG.md
+# Distribution / packaging
+*.tar.gz
+*.whl
+
+# Installer specific
+installer/*.tmp
+installer/*.log
+```

@@ -135,8 +135,20 @@ class StepEnv(InstallStep):
                 cmd, capture_output=True, encoding='utf-8', errors='replace', timeout=600
             )
             if result.returncode != 0:
-                print(f"  ❌ Ошибка установки: {result.stderr.strip()[:200]}")
+                stderr_msg = result.stderr.strip()[:200]
+                # Проверяем на ошибку sudoers
+                if "sudoers" in stderr_msg.lower() or "not in the sudoers file" in stderr_msg.lower():
+                    print(f"  ❌ Ошибка: у пользователя нет прав sudo.")
+                    print(f"  Решение: попросите администратора установить PyQt6:")
+                    print(f"     sudo {pm_info['install_cmd'][0]} {pkg_manager} install -y {pyqt6_pkg}")
+                    print(f"  Или добавьте текущего пользователя в sudoers.")
+                else:
+                    print(f"  ❌ Ошибка установки: {stderr_msg}")
                 return False
+        except FileNotFoundError:
+            print(f"  ❌ Ошибка: команда '{cmd[0]}' не найдена. "
+                  f"Убедитесь, что {pkg_manager} установлен.")
+            return False
         except Exception as e:
             print(f"  ❌ Ошибка установки: {e}")
             return False
