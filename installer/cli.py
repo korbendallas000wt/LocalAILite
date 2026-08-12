@@ -187,8 +187,8 @@ def main():
             print(f"  ⏭ {ollama_status.message}")
             step_results["step_ollama"] = {"name": "Бинарник Ollama", "ok": True, "skipped": True, "message": ollama_status.message}
         else:
-            reply = input("  Установить бинарник Ollama (~2.1 GB)? [Y/n]: ").strip().lower()
-            if reply in ('', 'y', 'yes', 'да'):
+            reply = input("  Установить бинарник Ollama (~2.1 GB)? [y/N]: ").strip().lower()
+            if reply in ('y', 'yes', 'да'):
                 result = step_ollama.install(
                     progress=lambda pct, msg: print(f"   [{pct:3d}%] {msg}")
                 )
@@ -213,8 +213,8 @@ def main():
             print(f"  ⏭ {sdxl_env_status.message}")
             step_results["step_sdxl_env"] = {"name": "SDXL окружение", "ok": True, "skipped": True, "message": sdxl_env_status.message}
         else:
-            reply = input("  Создать SDXL окружение (~6 GB)? [Y/n]: ").strip().lower()
-            if reply in ('', 'y', 'yes', 'да'):
+            reply = input("  Создать SDXL окружение (~6 GB)? [y/N]: ").strip().lower()
+            if reply in ('y', 'yes', 'да'):
                 result = step_sdxl_env.install(
                     progress=lambda pct, msg: print(f"   [{pct:3d}%] {msg}")
                 )
@@ -238,8 +238,8 @@ def main():
             print(f"  ⏭ {models_status.message}")
             step_results["step_models"] = {"name": "Скачивание моделей", "ok": True, "skipped": True, "message": models_status.message}
         else:
-            reply = input("  Скачать модели (рекомендованные советником)? [Y/n]: ").strip().lower()
-            if reply in ('', 'y', 'yes', 'да'):
+            reply = input("  Скачать модели (рекомендованные советником)? [y/N]: ").strip().lower()
+            if reply in ('y', 'yes', 'да'):
                 result = step_models.install(
                     progress=lambda pct, msg: print(f"   [{pct:3d}%] {msg}")
                 )

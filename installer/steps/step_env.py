@@ -33,9 +33,9 @@ class StepEnv(InstallStep):
     description = "Создание venv и установка PyQt6, requests, psutil"
 
     # Базовые зависимости для основного приложения (бутстрап, уровень 1)
-    BASE_PACKAGES = ["PyQt6", "requests", "psutil", "numpy<2"]
+    BASE_PACKAGES = ["PyQt6", "requests", "psutil", "numpy<2", "pillow"]
     # Пакеты, которые всегда ставим из pip (не зависят от CPU)
-    PIP_ONLY_PACKAGES = ["requests", "psutil"]
+    PIP_ONLY_PACKAGES = ["requests", "psutil", "numpy<2", "pillow"]
 
     def __init__(self, base_dir: str = None):
         if base_dir is None:
