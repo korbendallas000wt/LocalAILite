@@ -32,7 +32,7 @@ class HardwareDetector:
     # Диапазон версий Python, совместимых с torch/diffusers.
     # Проверено на рабочей сборке: 3.12.8 работает, 3.14 — нет.
     PYTHON_COMPAT_MIN = (3, 10)
-    PYTHON_COMPAT_MAX = (3, 12)
+    PYTHON_COMPAT_MAX = (3, 13)
 
     # Маппинг пакетных менеджеров: команда установки, флаг, пакет PyQt6
     PKG_MANAGERS = {
@@ -339,6 +339,48 @@ class HardwareDetector:
             pass
         return result
 
+
+    # === Sudo доступ ===
+    def detect_sudo_access(self) -> dict:
+        """Проверяет доступность sudo для текущего пользователя (без запроса пароля).
+        Возвращает {has_sudo: bool, username: str, message: str}
+        """
+        username = os.environ.get("USER", "") or os.environ.get("USERNAME", "unknown")
+        result = {"has_sudo": False, "username": username, "message": ""}
+
+        # 1. Есть ли вообще команда sudo
+        if not shutil.which("sudo"):
+            result["message"] = "Команда sudo не найдена в системе"
+            return result
+
+        # 2. Пробуем sudo -n true (кэш пароля активен)
+        try:
+            proc = subprocess.run(["sudo", "-n", "true"],
+                                  capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                result["has_sudo"] = True
+                result["message"] = "sudo доступен (кэш активен)"
+                return result
+        except Exception:
+            pass
+
+        # 3. Проверяем группы пользователя (sudo/wheel)
+        try:
+            proc = subprocess.run(["id", "-Gn", username],
+                                  capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                groups = proc.stdout.strip().split()
+                if "sudo" in groups or "wheel" in groups:
+                    result["has_sudo"] = True
+                    result["message"] = "Пользователь в группе sudo/wheel (потребуется пароль)"
+                    return result
+        except Exception:
+            pass
+
+        # 4. Пользователь не в sudoers
+        result["message"] = "Пользователь не в группе sudo/wheel"
+        return result
+
     def detect_all(self) -> dict:
         return {
             "os": self.detect_os(),
@@ -346,6 +388,7 @@ class HardwareDetector:
             "ram": self.detect_ram(),
             "gpu": self.detect_gpu(),
             "python": self.detect_python(),
+            "sudo": self.detect_sudo_access(),
             # disk — отдельный метод, вызывается с конкретным путём из конфига
         }
 

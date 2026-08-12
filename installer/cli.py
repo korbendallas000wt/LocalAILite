@@ -62,8 +62,18 @@ def main():
     print(f"  CPU: {cpu_info['model']} ({cpu_info['cores']} ядер)")
     print(f"  RAM: {ram_info['total_gb']:.1f} GB "
           f"(доступно {ram_info['available_gb']:.1f} GB)")
-    print(f"  Python совместимый (3.10-3.12): "
+    print(f"  Python совместимый (3.10-3.13): "
           f"{'да' if python_info['has_compatible'] else 'нет'}")
+
+    # Sudo доступ (информативно, не блокируем)
+    sudo_info = detection.get("sudo", {})
+    if sudo_info.get("has_sudo"):
+        print(f"  Sudo доступ: ✅ {sudo_info.get('message', '')}")
+    else:
+        print(f"  Sudo доступ: ❌ {sudo_info.get('message', '')}")
+        print(f"     ⚠ Если потребуется установка системных пакетов (PyQt6, Python 3.12),")
+        print(f"        она не сработает. Решение (от root): usermod -aG sudo {sudo_info.get('username', 'USERNAME')}")
+        print(f"        Если зависимости уже установлены — инсталлятор пройдёт без sudo.")
 
     # 2. Вердикты советника
     print_step("Шаг 1: Вердикты советника")
