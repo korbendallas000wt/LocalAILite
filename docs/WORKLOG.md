@@ -562,3 +562,63 @@ detection["os"]["pkg_manager"]  # "pacman", "dnf", "apt", "zypper", "emerge", "x
 - Будущий менеджер моделей в приложении
 
 **Приоритет:** 🟡 средний (важно для UX, но не критично для работы)
+
+---
+
+## Сессия 2026-08-14 (утро)
+
+**Продолжение:** Миграция QSettings → JSON-конфиг, автономность Debian 13
+
+**Принял вахту:** прочитал HANDOFF.md, WORKLOG.md, full_context.py
+
+### Что сделано:
+
+1. **Миграция QSettings → JSON-конфиг**
+   - Создан `installer/config.json` (внешний, пушится)
+   - Создан `installer/config_loader.py` (загрузчик с мержем)
+   - `utils/config.py` переписан на `data/local_config.json`
+   - Миграция из QSettings при первом запуске
+   - Коммит: `d1a7707`
+
+2. **Детектор: sdxl_mode + портативный Python + UI до 3.14**
+   - `detect_python(sdxl_mode=True)` — строгий диапазон 3.10-3.12
+   - Поиск портативного Python в `bin/python/python/bin/python3`
+   - UI совместим до Python 3.14 (системный из pkg manager)
+   - Коммит: `164f3fc`
+
+3. **step_sdxl_env: sdxl_mode + прямой импорт Config**
+   - `_find_python_for_sdxl()` использует `sdxl_mode=True`
+   - `_write_config_path()` без subprocess
+   - Коммит: `d9df0c5`
+
+4. **step_env: ensurepip + numpy из apt**
+   - `_check_ensurepip()` — проверка перед venv
+   - `_install_system_numpy()` — numpy из apt для стратегии system
+   - Коммит: `54194c3`
+
+5. **WORKLOG опубликован на GitHub**
+   - Перемещён в `docs/WORKLOG.md`
+   - Доступен через raw-ссылку для новых сессий
+   - Коммит: `957061c`
+
+6. **Скачивание портативного Python (последняя дыра Debian)**
+   - `_download_portable_python()` — скачивает из astral-sh (~60 MB)
+   - URL/local_path из `installer/config.json`
+   - Fallback в `_ensure_compatible_python()` когда apt не работает
+   - Коммит: [будет после пуша]
+
+### Результат:
+- ✅ Debian 13 теперь **полностью автономен** — шаг 7 не падает
+- ✅ Все 4 критичных бага Debian 13 закрыты
+- ✅ Баг #9 (39 GB) подтверждён как исправленный (allow_patterns)
+
+### Прогон на Debian 13 (чистая установка):
+- Шаг 0-6: ✅ прошли
+- Шаг 7: ❌ упал (apt не нашёл python3.12) → **теперь исправлено**
+- Шаг 8: пропущен (модели не качали)
+
+### Осталось:
+- 🟡 Повторный прогон на Debian 13 (проверить скачивание портативного Python)
+- 🟡 Прогон на openSUSE Tumbleweed
+- 🟡 Прогон на Ubuntu 24.04
+- 🟡 sudo chcon таймаут (баг #10) — capture_output

@@ -62,21 +62,14 @@ class StepSdxlEnv(InstallStep):
         return os.getcwd()
 
     def _read_config_value(self, key: str, default: str = "") -> str:
-        """Читает значение из QSettings через основной venv python."""
-        main_python = os.path.join(self.base_dir, "venv", "bin", "python")
-        if not os.path.exists(main_python):
-            return default
+        """Читает значение из Config (JSON, без PyQt)."""
         try:
-            result = subprocess.run(
-                [main_python, "-c",
-                 f"from utils.config import Config; c = Config(); print(c.get('{key}', '{default}') or '{default}')"],
-                capture_output=True, text=True, timeout=10, cwd=self.base_dir
-            )
-            if result.returncode == 0:
-                return result.stdout.strip()
+            from utils.config import Config
+            config = Config()
+            value = config.get(key, default)
+            return value if value else default
         except Exception:
-            pass
-        return default
+            return default
 
     def _get_paths(self) -> dict:
         """Читает путь SDXL venv из Config с fallback на venv_sdxl.
@@ -153,7 +146,80 @@ class StepSdxlEnv(InstallStep):
 
         # Повторная детекция: ищем установленный Python 3.12
         print("  Поиск установленного Python 3.12...")
-        return self._find_python_for_sdxl()
+        result = self._find_python_for_sdxl()
+        
+        # Если apt не сработал (пакета нет) — предлагаем скачать портативный Python
+        if not result:
+            print(f"  apt не смог установить Python 3.12.")
+            print(f"  Предлагаю скачать портативный Python (~60 MB) из astral-sh.")
+            reply = input("  Скачать портативный Python? [Y/n]: ").strip().lower()
+            if reply not in ('', 'y', 'yes', 'да'):
+                print("  ⏭ Пропущено")
+                return None
+            result = self._download_portable_python()
+        
+        return result
+
+    def _download_portable_python(self) -> str:
+        """Скачивает портативный Python из astral-sh.
+        URL и путь берутся из installer/config.json (поле python.portable).
+        Возвращает путь к python3 или None.
+        """
+        try:
+            from installer.config_loader import load_config
+            config = load_config()
+            
+            url = config.get('python.portable.url')
+            version = config.get('python.portable.version', '3.12')
+            local_path = config.get_path('python.portable.local_path')
+            
+            if not url or not local_path:
+                print(f"  ❌ URL портативного Python не настроен в installer/config.json")
+                return None
+            
+            print(f"  Скачивание портативного Python {version}...")
+            print(f"  URL: {url[:80]}...")
+            
+            # Скачиваем tar.gz в /tmp
+            import tarfile
+            import shutil
+            import urllib.request
+            
+            tmp_tar = "/tmp/portable-python.tar.gz"
+            extract_dir = os.path.join(self.base_dir, "bin", "python")
+            
+            try:
+                urllib.request.urlretrieve(url, tmp_tar)
+            except Exception as e:
+                print(f"  ❌ Ошибка скачивания: {e}")
+                return None
+            
+            # Распаковываем
+            try:
+                os.makedirs(extract_dir, exist_ok=True)
+                with tarfile.open(tmp_tar, "r:gz") as tar:
+                    tar.extractall(extract_dir)
+            except Exception as e:
+                print(f"  ❌ Ошибка распаковки: {e}")
+                return None
+            
+            # Удаляем tar
+            try:
+                os.remove(tmp_tar)
+            except Exception:
+                pass
+            
+            # Проверяем, что python существует
+            if os.path.exists(local_path):
+                print(f"  ✅ Портативный Python установлен: {local_path}")
+                return local_path
+            else:
+                print(f"  ❌ Python не найден после установки: {local_path}")
+                return None
+                
+        except Exception as e:
+            print(f"  ❌ Ошибка скачивания портативного Python: {e}")
+            return None
 
     def _get_torch_index_url(self) -> str:
         """Выбирает URL для torch на основе детекции GPU.
