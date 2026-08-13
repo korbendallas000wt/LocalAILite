@@ -32,7 +32,7 @@ class HardwareDetector:
     # Диапазон версий Python, совместимых с torch/diffusers.
     # Проверено на рабочей сборке: 3.12.8 работает, 3.14 — нет.
     PYTHON_COMPAT_MIN = (3, 10)
-    PYTHON_COMPAT_MAX = (3, 13)
+    PYTHON_COMPAT_MAX = (3, 14)
 
     # Маппинг пакетных менеджеров: команда установки, флаг, пакет PyQt6
     PKG_MANAGERS = {
@@ -212,6 +212,18 @@ class HardwareDetector:
         return info
 
     # === Python (ГЛАВНЫЙ метод) ===
+    def _find_project_root(self) -> str:
+        """Ищем корень проекта (где main.py)."""
+        cur = os.path.dirname(os.path.abspath(__file__))
+        for _ in range(5):
+            if os.path.exists(os.path.join(cur, "main.py")):
+                return cur
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+        return os.getcwd()
+
     def _get_python_version(self, path: str):
         """Возвращает (tuple_version, str_version) или (None, None)."""
         try:
@@ -227,16 +239,37 @@ class HardwareDetector:
             pass
         return None, None
 
-    def detect_python(self) -> dict:
+    def detect_python(self, sdxl_mode: bool = False) -> dict:
+        """Диагностика Python.
+        
+        Args:
+            sdxl_mode: Если True — ищем только Python 3.10-3.12 (для SDXL venv).
+                       Если False — ищем Python 3.10-3.13 (для UI).
+        """
+        # Для SDXL строго до 3.12, для UI можно до 3.13
+        max_version = (3, 12) if sdxl_mode else self.PYTHON_COMPAT_MAX
+        
         result = {
             "candidates": [],
             "compatible": [],
             "has_compatible": False,
             "system_version": None,
-            "compat_range": {"min": "3.10", "max": "3.12"},
+            "compat_range": {"min": "3.10", "max": f"{max_version[0]}.{max_version[1]}"},
+            "sdxl_mode": sdxl_mode,
         }
         seen = set()
         candidates = []
+
+        # 0. Портативный Python в bin/python/python/bin/python3 (приоритет для SDXL)
+        # Ищем корень проекта (где main.py)
+        project_root = self._find_project_root()
+        portable_python = os.path.join(project_root, "bin", "python", "python", "bin", "python3")
+        if os.path.exists(portable_python):
+            # Для SDXL портативный Python имеет наивысший приоритет
+            if sdxl_mode:
+                candidates.insert(0, (os.path.realpath(portable_python), "portable"))
+            else:
+                candidates.append((os.path.realpath(portable_python), "portable"))
 
         # 1. PATH
         for name in ("python3", "python"):
@@ -268,7 +301,7 @@ class HardwareDetector:
             if version_tuple is None:
                 continue
             major, minor = version_tuple[0], version_tuple[1]
-            compatible = self.PYTHON_COMPAT_MIN <= (major, minor) <= self.PYTHON_COMPAT_MAX
+            compatible = self.PYTHON_COMPAT_MIN <= (major, minor) <= max_version
             cand = {
                 "path": real_path,
                 "version": list(version_tuple),
