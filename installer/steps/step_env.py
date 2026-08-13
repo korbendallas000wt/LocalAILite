@@ -97,12 +97,156 @@ class StepEnv(InstallStep):
             return detection["candidates"][0]["path"]
         return None
 
+    def _check_ensurepip(self, python_bin: str) -> bool:
+        """Проверяет наличие модуля ensurepip перед созданием venv.
+        Если не найден — предлагает установить python3.X-venv через пакетный менеджер.
+        Возвращает True, если ensurepip доступен.
+        """
+        # Проверяем, работает ли ensurepip
+        try:
+            result = subprocess.run(
+                [python_bin, "-c", "import ensurepip"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                return True
+        except Exception:
+            pass
+        
+        # ensurepip не найден — предлагаем установку
+        print(f"  ⚠ Модуль ensurepip не найден в {python_bin}")
+        print(f"  venv не может быть создан без ensurepip.")
+        
+        os_info = self.detector.detect_os()
+        pkg_manager = os_info.get("pkg_manager")
+        if not pkg_manager:
+            print(f"  Пакетный менеджер не определён. Установите python3-venv вручную.")
+            return False
+        
+        # Определяем версию Python
+        try:
+            result = subprocess.run(
+                [python_bin, "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                py_version = result.stdout.strip()
+            else:
+                py_version = "3"
+        except Exception:
+            py_version = "3"
+        
+        # Маппинг пакетов venv для разных пакетных менеджеров
+        venv_packages = {
+            "apt": f"python{py_version}-venv",
+            "dnf": f"python{py_version}-venv",
+            "pacman": "python",  # На Arch/Manjaro venv встроен
+            "zypper": f"python{py_version}-venv",
+        }
+        
+        pkg_name = venv_packages.get(pkg_manager)
+        if not pkg_name:
+            print(f"  Пакет для {pkg_manager} не определён.")
+            return False
+        
+        pm_info = self.detector.PKG_MANAGERS.get(pkg_manager, {})
+        install_cmd = pm_info.get("install_cmd", [])
+        noconfirm = pm_info.get("noconfirm_flag", "")
+        
+        cmd = install_cmd[:]
+        if noconfirm:
+            cmd.append(noconfirm)
+        cmd.append(pkg_name)
+        
+        print(f"  Команда установки: {' '.join(cmd)}")
+        reply = input(f"  Установить {pkg_name}? (sudo) [Y/n]: ").strip().lower()
+        if reply not in ('', 'y', 'yes', 'да'):
+            print("  ⏭ Пропущено")
+            return False
+        
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, encoding='utf-8', errors='replace', timeout=600
+            )
+            if result.returncode != 0:
+                print(f"  ❌ Ошибка установки: {result.stderr.strip()[:200]}")
+                return False
+        except Exception as e:
+            print(f"  ❌ Ошибка установки: {e}")
+            return False
+        
+        # Повторная проверка
+        try:
+            result = subprocess.run(
+                [python_bin, "-c", "import ensurepip"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                print(f"  ✅ ensurepip доступен")
+                return True
+        except Exception:
+            pass
+        
+        print(f"  ❌ ensurepip всё ещё не найден после установки")
+        return False
+
+    def _install_system_numpy(self) -> bool:
+        """Устанавливает numpy из пакетного менеджера (для стратегии system).
+        Системный numpy собран под базовый amd64, работает на старом CPU.
+        Возвращает True, если установка прошла успешно.
+        """
+        os_info = self.detector.detect_os()
+        pkg_manager = os_info.get("pkg_manager")
+        if not pkg_manager:
+            return False
+        
+        # Маппинг пакетов numpy для разных пакетных менеджеров
+        numpy_packages = {
+            "apt": "python3-numpy",
+            "dnf": "python3-numpy",
+            "pacman": "python-numpy",
+            "zypper": "python3-numpy",
+        }
+        
+        pkg_name = numpy_packages.get(pkg_manager)
+        if not pkg_name:
+            return False
+        
+        pm_info = self.detector.PKG_MANAGERS.get(pkg_manager, {})
+        install_cmd = pm_info.get("install_cmd", [])
+        noconfirm = pm_info.get("noconfirm_flag", "")
+        
+        cmd = install_cmd[:]
+        if noconfirm:
+            cmd.append(noconfirm)
+        cmd.append(pkg_name)
+        
+        print(f"  Установка системного numpy (собран под базовый amd64)...")
+        print(f"  Команда: {' '.join(cmd)}")
+        
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, encoding='utf-8', errors='replace', timeout=600
+            )
+            if result.returncode != 0:
+                print(f"  ⚠ Ошибка установки: {result.stderr.strip()[:200]}")
+                return False
+        except Exception as e:
+            print(f"  ⚠ Ошибка установки: {e}")
+            return False
+        
+        print(f"  ✅ Системный numpy установлен")
+        return True
+
     def _get_packages_to_install(self):
-        """Возвращает список пакетов для установки из pip."""
+        """Возвращает список пакетов для установки из pip.
+        Для стратегии system: numpy ставится из пакетного менеджера, а не из pip.
+        """
         if self._strategy == "pip":
             return self.BASE_PACKAGES
         elif self._strategy == "system":
-            return self.PIP_ONLY_PACKAGES
+            # Убираем numpy из pip — ставим из пакетного менеджера
+            return [pkg for pkg in self.PIP_ONLY_PACKAGES if not pkg.startswith("numpy")]
         return []
 
     def _ensure_system_pyqt6(self) -> bool:
@@ -200,6 +344,14 @@ class StepEnv(InstallStep):
                 "Не найден подходящий Python для создания venv"
             )
 
+        # 1.5. Проверяем ensurepip перед созданием venv
+        self._report(progress, 25, "Проверка ensurepip...")
+        if not self._check_ensurepip(python_bin):
+            return StepStatus.failed(
+                "ensurepip не доступен. venv не может быть создан. "
+                "Установите python3.X-venv вручную и повторите установку."
+            )
+
         # 2. Создаём venv (--system-site-packages для стратегии system)
         self._report(progress, 30, f"Создание venv: {self.venv_dir}")
         venv_cmd = [python_bin, "-m", "venv"]
@@ -226,6 +378,12 @@ class StepEnv(InstallStep):
             )
         except Exception:
             pass
+
+        # 3.5. Для стратегии system — устанавливаем numpy из пакетного менеджера
+        if self._strategy == "system":
+            self._report(progress, 60, "Установка системного numpy...")
+            if not self._install_system_numpy():
+                print(f"  ⚠ Системный numpy не установлен. Попытка из pip...")
 
         # 4. Устанавливаем зависимости из pip
         packages = self._get_packages_to_install()
