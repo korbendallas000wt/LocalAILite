@@ -6,13 +6,7 @@
 
     LocalAILite/
     ├── main.py                              # Точка входа: QApplication, валидация путей, запуск MainWindow
-    ├── full_context.py                      # Склеенный контекст всех файлов (для LLM)
-    ├── full_docs.py                         # Склеенная документация (для LLM)
-    ├── get_context.sh                       # Точечная выгрузка файлов для LLM
-    ├── save_context.sh                      # Скрипт обновления full_context.py
-    ├── sync_repo.sh                         # Синхронизация рабочей папки -> Repo
-    ├── backup.sh                            # Полный бэкап в Backup/
-    ├── merge_docs.py                        # Скрипт склейки документации в full_docs.py
+    ├── LocalAILite.desktop                  # Ярлык для запуска из меню/рабочего стола
     ├── docs/                                # Документация
     │   ├── CHANGELOG.md                     # История версий
     │   ├── PROJECT_MANIFEST.md              # Контракты и архитектура
@@ -20,8 +14,20 @@
     │   ├── PHILOSOPHY.md                    # Философия проекта
 │   └── ROADMAP.md                       # План развития
     │
+    ├── WORK/                                # Вспомогательные скрипты и документы (для разработки)
+    │   ├── HANDOFF.md                       # Передача контекста между сессиями
+    │   ├── WORKLOG.md                       # Журнал разработки (текущий статус, баги, TODO)
+    │   ├── full_context.py                  # Склейка всего кода (для LLM)
+    │   ├── full_docs.py                     # Склейка документации (для LLM)
+    │   ├── backup.sh                        # Полный бэкап в Backup/
+    │   ├── get_context.sh                   # Точечная выгрузка файлов для LLM
+    │   ├── save_context.sh                  # Скрипт обновления full_context.py
+    │   ├── sync_repo.sh                     # Синхронизация рабочей папки -> Repo/
+    │   └── merge_docs.py                    # Скрипт склейки документации
+    │
     ├── core/                                # Ядро (логика без UI)
     │   ├── chat_manager.py                  # История чата (messages list)
+    │   ├── model_validator.py               # Проверка целостности моделей (HF cache, single-file, Ollama)
     │   ├── checkpoint_manager.py            # Чекпоинты генерации: JSON + PT, архивация
     │   ├── diffusers_worker.py              # QProcess-обёртка для generate_diffusers.py
     │   ├── history_manager.py               # Менеджер истории: data/history/{timestamp}/
