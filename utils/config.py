@@ -1,26 +1,137 @@
-from PyQt6.QtCore import QSettings
+"""
+utils/config.py — управление настройками приложения.
+
+Хранение: data/local_config.json (в папке проекта, НЕ пушится)
+Миграция: при первом запуске копирует значения из QSettings (если есть)
+
+Структура JSON:
+{
+  "version": 1,
+  "settings": { "url": "...", "sdxl/venv_path": "...", ... },
+  "features": { "ollama": true, "sdxl": true }
+}
+"""
+
 import json
+import os
+from pathlib import Path
 
 
 class Config:
     def __init__(self):
-        self.settings = QSettings("LocalAILite", "LocalAILite")
-        self._migrate_from_old()
+        self._data_dir = self._get_data_dir()
+        self._config_path = self._data_dir / "local_config.json"
+        self._data = {"version": 1, "settings": {}, "features": {}}
+        self._load()
 
-    def _migrate_from_old(self):
-        """Миграция настроек из старой версии OllamaChat"""
+    def _get_data_dir(self) -> Path:
+        """Путь к папке data/ проекта."""
+        return Path(__file__).resolve().parent.parent / "data"
+
+    def _load(self):
+        """Загружает конфиг из JSON или мигрирует из QSettings."""
+        if self._config_path.exists():
+            try:
+                with open(self._config_path, 'r', encoding='utf-8') as f:
+                    self._data = json.load(f)
+                return
+            except (json.JSONDecodeError, OSError):
+                # Битый файл — создаём заново
+                pass
+
+        # JSON нет — пробуем мигрировать из QSettings
+        migrated = self._migrate_from_qsettings()
+        if not migrated:
+            # QSettings тоже нет — создаём пустой конфиг
+            self._save()
+
+    def _migrate_from_qsettings(self) -> bool:
+        """Мигрирует настройки из QSettings в JSON.
+
+        Returns:
+            True если миграция прошла успешно, False если QSettings пуст
+        """
+        try:
+            from PyQt6.QtCore import QSettings
+        except ImportError:
+            return False
+
+        settings = QSettings("LocalAILite", "LocalAILite")
+        keys = settings.allKeys()
+
+        if not keys:
+            return False
+
+        # Миграция из старого OllamaChat
         old_settings = QSettings("OllamaChat", "OllamaChat")
         if not old_settings.contains("migrated"):
             for key in old_settings.allKeys():
-                if not self.settings.contains(key):
-                    self.settings.setValue(key, old_settings.value(key))
+                if not settings.contains(key):
+                    settings.setValue(key, old_settings.value(key))
             old_settings.setValue("migrated", "true")
 
+        # Копируем значения в JSON
+        migrated_count = 0
+        for key in settings.allKeys():
+            value = settings.value(key)
+            if value is not None:
+                # Определяем, куда класть: settings или features
+                if key.startswith("features/"):
+                    feature_name = key.replace("features/", "")
+                    # Конвертируем строку в bool
+                    if isinstance(value, str):
+                        self._data["features"][feature_name] = value.lower() == "true"
+                    else:
+                        self._data["features"][feature_name] = bool(value)
+                else:
+                    # Конвертируем типы
+                    if isinstance(value, str):
+                        # Пробуем распарсить число
+                        try:
+                            if '.' in value:
+                                value = float(value)
+                            else:
+                                value = int(value)
+                        except ValueError:
+                            pass  # Оставляем как строку
+                    self._data["settings"][key] = value
+                migrated_count += 1
+
+        if migrated_count > 0:
+            self._save()
+            return True
+
+        return False
+
+    def _save(self):
+        """Сохраняет конфиг в JSON."""
+        self._data_dir.mkdir(parents=True, exist_ok=True)
+        with open(self._config_path, 'w', encoding='utf-8') as f:
+            json.dump(self._data, f, indent=2, ensure_ascii=False)
+
     def get(self, key, default=None):
-        return self.settings.value(key, default)
+        """Получить значение по ключу.
+
+        Ключи с префиксом "features/" читаются из features, остальные из settings.
+        """
+        if key.startswith("features/"):
+            feature_name = key.replace("features/", "")
+            return self._data.get("features", {}).get(feature_name, default)
+        else:
+            return self._data.get("settings", {}).get(key, default)
 
     def set(self, key, value):
-        self.settings.setValue(key, value)
+        """Записать значение по ключу."""
+        if key.startswith("features/"):
+            feature_name = key.replace("features/", "")
+            if "features" not in self._data:
+                self._data["features"] = {}
+            self._data["features"][feature_name] = value
+        else:
+            if "settings" not in self._data:
+                self._data["settings"] = {}
+            self._data["settings"][key] = value
+        self._save()
 
     def get_json(self, key, default=None):
         """Получить значение из конфига и десериализовать из JSON"""
@@ -28,7 +139,9 @@ class Config:
         if value is None:
             return default
         try:
-            return json.loads(value)
+            if isinstance(value, str):
+                return json.loads(value)
+            return value
         except (json.JSONDecodeError, TypeError):
             return default
 
@@ -60,13 +173,15 @@ class Config:
         self.set("sdxl/scheduler", scheduler)
 
     def get_sdxl_default_steps(self):
-        return int(self.get("sdxl/steps", 30))
+        value = self.get("sdxl/steps", 30)
+        return int(value) if value else 30
 
     def get_sdxl_default_cfg(self):
-        return float(self.get("sdxl/cfg", 7.5))
+        value = self.get("sdxl/cfg", 7.5)
+        return float(value) if value else 7.5
 
     def get_sdxl_output_dir(self):
-        return self.get("sdxl/output_dir", "/home/lin/Pictures/LocalAILite")
+        return self.get("sdxl/output_dir", os.path.expanduser("~/Pictures/LocalAILite"))
 
     def get_sdxl_device(self):
         return self.get("sdxl/device", "cuda")
@@ -79,55 +194,46 @@ class Config:
 
     def get_data_dir(self):
         """Возвращает путь к внутренней папке data/ проекта"""
-        import os
-        return os.path.abspath(os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data"
-        ))
+        return str(self._data_dir)
 
     def get_previews_dir(self):
         """Папка для промежуточных превью (технические файлы)"""
-        import os
         return os.path.join(self.get_data_dir(), "previews")
 
     def get_history_dir(self):
         """Папка для истории генерации (PNG на каждом шаге)"""
-        import os
         return os.path.join(self.get_data_dir(), "history")
 
     def get_logs_dir(self):
         """Папка для логов (технические файлы)"""
-        import os
         return os.path.join(self.get_data_dir(), "logs")
 
     # === Ollama (локальный бинарник) ===
     def get_ollama_binary_path(self):
-        """Путь к локальному бинарнику Ollama (настраиваемый через QSettings)"""
-        import os
+        """Путь к локальному бинарнику Ollama"""
         default = os.path.join(self.get_data_dir(), "..", "bin", "ollama", "bin", "ollama")
+        default = os.path.normpath(default)
         return self.get("ollama/binary_path", default)
-    
+
     def set_ollama_binary_path(self, path):
         self.set("ollama/binary_path", path)
-    
+
     def get_ollama_lib_dir(self):
-        """Папка с библиотеками Ollama (CUDA, ROCm), настраиваемая через QSettings"""
-        import os
+        """Папка с библиотеками Ollama (CUDA, ROCm)"""
         default = os.path.join(self.get_data_dir(), "..", "bin", "ollama", "lib", "ollama")
+        default = os.path.normpath(default)
         return self.get("ollama/lib_path", default)
-    
+
     def set_ollama_lib_dir(self, path):
         self.set("ollama/lib_path", path)
 
     # === Image Prep ===
     def get_init_images_dir(self):
         """Папка для подготовленных изображений"""
-        import os
         return os.path.join(self.get_data_dir(), "init_images")
-    
+
     def get_models_registry_path(self):
         """Путь к файлу реестра моделей"""
-        import os
         return os.path.join(self.get_data_dir(), "models_registry.json")
 
     # === Features (усечённое приложение) ===
@@ -142,4 +248,4 @@ class Config:
 
     def set_feature(self, feature_name: str, enabled: bool):
         """Устанавливает флаг компонента (features/*)."""
-        self.set(f"features/{feature_name}", str(enabled).lower())
+        self.set(f"features/{feature_name}", enabled)

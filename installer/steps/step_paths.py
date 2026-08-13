@@ -147,20 +147,14 @@ class StepPaths(InstallStep):
         return chosen
 
     def _read_config_value(self, key: str, default: str = "") -> str:
-        """Читает значение из QSettings через venv python."""
-        if not os.path.exists(self.venv_python):
-            return default
+        """Читает значение из Config (JSON, без PyQt)."""
         try:
-            result = subprocess.run(
-                [self.venv_python, "-c",
-                 f"from utils.config import Config; c = Config(); print(c.get('{key}', '{default}') or '{default}')"],
-                capture_output=True, text=True, timeout=10, cwd=self.base_dir
-            )
-            if result.returncode == 0:
-                return result.stdout.strip()
+            from utils.config import Config
+            config = Config()
+            value = config.get(key, default)
+            return value if value else default
         except Exception:
-            pass
-        return default
+            return default
 
     def _write_config_values(self, values: dict) -> bool:
         """Записывает значения в QSettings через venv python."""
@@ -236,11 +230,11 @@ class StepPaths(InstallStep):
                 except Exception:
                     pass
 
-        self._report(progress, 60, "Сохранение путей в QSettings...")
+        self._report(progress, 60, "Сохранение путей в Config...")
         if not self._write_config_values(paths):
             return StepStatus.failed(
-                "Не удалось записать пути в QSettings",
-                details=f"venv_python={self.venv_python}"
+                "Не удалось записать пути в Config",
+                details="Ошибка записи в data/local_config.json"
             )
 
         self._report(progress, 100, "Пути настроены")
