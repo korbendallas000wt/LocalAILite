@@ -101,11 +101,15 @@ class StepSdxlEnv(InstallStep):
 
     def _find_python_for_sdxl(self):
         """Находит совместимый Python (3.10-3.12) для SDXL venv.
+        Использует sdxl_mode=True в детекторе — строгий диапазон 3.10-3.12
+        + приоритет портативного Python из bin/python/.
         Возвращает None, если совместимого нет (без fallback на несовместимый).
         """
-        detection = self.detector.detect_python()
+        detection = self.detector.detect_python(sdxl_mode=True)
         if detection.get("has_compatible") and detection.get("compatible"):
-            return detection["compatible"][0]["path"]
+            first = detection["compatible"][0]
+            print(f"  Найден Python {first['version_str']} ({first['source']})")
+            return first["path"]
         return None
 
     def _ensure_compatible_python(self) -> str:
@@ -161,18 +165,14 @@ class StepSdxlEnv(InstallStep):
         return "https://download.pytorch.org/whl/cpu"
 
     def _write_config_path(self, venv_path: str) -> bool:
-        """Записывает путь к SDXL venv в QSettings через основной venv python."""
-        main_python = os.path.join(self.base_dir, "venv", "bin", "python")
-        if not os.path.exists(main_python):
-            return False
-        script = f"from utils.config import Config; c = Config(); c.set_sdxl_venv_path('{venv_path}')"
+        """Записывает путь к SDXL venv в data/local_config.json (прямой импорт, без subprocess)."""
         try:
-            result = subprocess.run(
-                [main_python, "-c", script],
-                capture_output=True, text=True, timeout=10, cwd=self.base_dir
-            )
-            return result.returncode == 0
-        except Exception:
+            from utils.config import Config
+            config = Config()
+            config.set_sdxl_venv_path(venv_path)
+            return True
+        except Exception as e:
+            print(f"  ⚠ Ошибка записи в Config: {e}")
             return False
 
     def is_installed(self) -> StepStatus:
