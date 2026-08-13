@@ -133,31 +133,34 @@ class StepSdxlEnv(InstallStep):
             print("  ⏭ Пропущено")
             return None
 
+        apt_success = False
         try:
             result = subprocess.run(
                 cmd, capture_output=True, encoding='utf-8', errors='replace', timeout=600
             )
-            if result.returncode != 0:
+            if result.returncode == 0:
+                apt_success = True
+            else:
                 print(f"  ❌ Ошибка установки: {result.stderr.strip()[:200]}")
-                return None
         except Exception as e:
             print(f"  ❌ Ошибка установки: {e}")
-            return None
 
-        # Повторная детекция: ищем установленный Python 3.12
-        print("  Поиск установленного Python 3.12...")
-        result = self._find_python_for_sdxl()
-        
-        # Если apt не сработал (пакета нет) — предлагаем скачать портативный Python
+        # Повторная детекция (если apt отработал без ошибок)
+        result = None
+        if apt_success:
+            print("  Поиск установленного Python 3.12...")
+            result = self._find_python_for_sdxl()
+
+        # Если apt упал или Python не найден — предлагаем портативный
         if not result:
-            print(f"  apt не смог установить Python 3.12.")
+            print(f"  Системный Python 3.12 недоступен.")
             print(f"  Предлагаю скачать портативный Python (~60 MB) из astral-sh.")
             reply = input("  Скачать портативный Python? [Y/n]: ").strip().lower()
             if reply not in ('', 'y', 'yes', 'да'):
                 print("  ⏭ Пропущено")
                 return None
-            result = self._download_portable_python()
-        
+            return self._download_portable_python()
+
         return result
 
     def _download_portable_python(self) -> str:
