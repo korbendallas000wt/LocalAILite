@@ -4,7 +4,7 @@ import requests
 
 class PathValidator:
     def validate_venv(self, path: str) -> dict:
-        """Проверка venv"""
+        """Проверка venv (быстрая: только пути и запуск Python)"""
         if not path:
             return {"valid": False, "error": "Путь не указан"}
 
@@ -33,7 +33,7 @@ class PathValidator:
             return {"valid": False, "error": str(e)}
 
     def validate_models_path(self, path: str) -> dict:
-        """Проверка папки моделей"""
+        """Проверка папки моделей (быстрая: только подсчёт)"""
         if not path:
             return {"valid": False, "error": "Путь не указан", "count": 0}
         if not os.path.exists(path):
