@@ -249,6 +249,29 @@ class StepEnv(InstallStep):
             return [pkg for pkg in self.PIP_ONLY_PACKAGES if not pkg.startswith("numpy")]
         return []
 
+    def _get_system_python_minor_tag(self):
+        """Возвращает строку вида '313' (major+minor) для системного Python.
+        Нужно для openSUSE, где пакет PyQt6 = python{major}{minor}-PyQt6.
+        """
+        system_python = None
+        for candidate in ["/usr/bin/python3", "/usr/bin/python"]:
+            if os.path.exists(candidate):
+                system_python = candidate
+                break
+        if not system_python:
+            return None
+        try:
+            proc = subprocess.run(
+                [system_python, "-c",
+                 "import sys; print(f'{sys.version_info[0]}{sys.version_info[1]}')"],
+                capture_output=True, text=True, timeout=10
+            )
+            if proc.returncode == 0 and proc.stdout.strip().isdigit():
+                return proc.stdout.strip()
+        except Exception:
+            pass
+        return None
+
     def _ensure_system_pyqt6(self) -> bool:
         """Пытается установить системный PyQt6 через пакетный менеджер.
         Возвращает True, если после установки PyQt6 работает.
@@ -262,6 +285,12 @@ class StepEnv(InstallStep):
 
         pm_info = self.detector.PKG_MANAGERS[pkg_manager]
         pyqt6_pkg = pm_info["pyqt6_package"]
+        # openSUSE (rolling): пакет PyQt6 привязан к версии системного Python
+        # (python313-PyQt6, python314-PyQt6), generic-имени нет — формируем динамически
+        if pkg_manager == "zypper":
+            ver = self._get_system_python_minor_tag()
+            if ver:
+                pyqt6_pkg = f"python{ver}-PyQt6"
         cmd = pm_info["install_cmd"][:]
         if pm_info["noconfirm_flag"]:
             cmd.append(pm_info["noconfirm_flag"])
