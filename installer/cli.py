@@ -42,6 +42,56 @@ def print_step(text):
     print(f"\n--- {text} ---")
 
 
+
+def create_desktop_shortcut(project_root: str) -> bool:
+    """Создаёт ярлык на рабочем столе (freedesktop .desktop файл)."""
+    try:
+        # Пути
+        venv_python = os.path.join(project_root, "venv", "bin", "python")
+        main_py = os.path.join(project_root, "main.py")
+
+        # Проверяем, что venv и main.py существуют
+        if not os.path.exists(venv_python):
+            print(f"  ⚠ venv не найден: {venv_python}")
+            return False
+        if not os.path.exists(main_py):
+            print(f"  ⚠ main.py не найден: {main_py}")
+            return False
+
+        # Содержимое .desktop файла
+        desktop_content = f"""[Desktop Entry]
+Version=1.0
+Name=LocalAILite
+Comment=AI приложение для локального запуска
+Exec={venv_python} {main_py}
+Path={project_root}
+Icon=utilities-terminal
+Terminal=false
+Type=Application
+Categories=Development;
+"""
+
+        # Путь к .desktop файлу
+        desktop_dir = os.path.expanduser("~/.local/share/applications")
+        os.makedirs(desktop_dir, exist_ok=True)
+        desktop_path = os.path.join(desktop_dir, "localailite.desktop")
+
+        # Записываем файл
+        with open(desktop_path, 'w') as f:
+            f.write(desktop_content)
+
+        # Делаем исполняемым
+        os.chmod(desktop_path, 0o755)
+
+        print(f"  ✅ Ярлык создан: {desktop_path}")
+        print(f"     Найдите 'LocalAILite' в меню приложений")
+        return True
+
+    except Exception as e:
+        print(f"  ⚠ Ошибка создания ярлыка: {e}")
+        return False
+
+
 def main():
     print_header("LocalAILite — бутстрап (уровень 1)")
     step_results = {}  # Сбор статусов шагов для честного итога
@@ -321,6 +371,39 @@ def main():
         print(f"     Ollama: {'✅ поддерживается' if ollama_supported else '❌ не поддерживается'}")
         print(f"     SDXL:   {'✅ поддерживается' if sdxl_supported else '❌ не поддерживается'}")
         print(f"     Visual editor: ✅ всегда доступен")
+
+        # Предложения после успешной установки
+        print()
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+        # Предложение создать ярлык
+        reply = input("  Создать ярлык на рабочем столе? [Y/n]: ").strip().lower()
+        if reply in ('', 'y', 'yes', 'да'):
+            create_desktop_shortcut(project_root)
+
+        # Предложение запустить приложение
+        reply = input("  Запустить приложение сейчас? [Y/n]: ").strip().lower()
+        if reply in ('', 'y', 'yes', 'да'):
+            venv_python = os.path.join(project_root, "venv", "bin", "python")
+            main_py = os.path.join(project_root, "main.py")
+
+            if os.path.exists(venv_python) and os.path.exists(main_py):
+                print()
+                print("  Запуск приложения...")
+                import subprocess
+                try:
+                    subprocess.Popen(
+                        [venv_python, main_py],
+                        cwd=project_root,
+                        start_new_session=True
+                    )
+                    print("  ✅ Приложение запущено в фоне")
+                except Exception as e:
+                    print(f"  ⚠ Не удалось запустить приложение: {e}")
+                    print(f"     Запустите вручную: venv/bin/python main.py")
+            else:
+                print("  ⚠ venv или main.py не найдены. Запустите вручную: venv/bin/python main.py")
+
 
 
 if __name__ == "__main__":
