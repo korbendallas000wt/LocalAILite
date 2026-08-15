@@ -38,3 +38,11 @@ venv_sdxl/
 *.tmp
 *.log
 .cache/
+
+# Бэкапы
+*.bak
+*.bak.*
+
+# Локальные хэндоффы (уже WORK/HANDOFF.md игнорируется)
+docs/HANDOFF.md
+docs/HANDOFF_*.md
