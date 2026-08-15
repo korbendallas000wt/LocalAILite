@@ -254,6 +254,52 @@ def main():
         print("  ⏭ Пропущено: нет поддерживаемых компонентов")
         step_results["step_models"] = {"name": "Скачивание моделей", "ok": True, "skipped": True, "message": "Нет поддерживаемых компонентов"}
 
+
+    # Финальная проверка (глубокие проверки компонентов)
+    if ollama_supported or sdxl_supported:
+        print_step("Финальная проверка компонентов")
+        from installer.final_check import FinalCheck
+
+        features = {
+            "ollama": ollama_supported,
+            "sdxl": sdxl_supported,
+        }
+
+        final = FinalCheck(progress=lambda cur, tot, msg: print(f"   [{cur}/{tot}] {msg}"))
+        final_result = final.run(features)
+
+        # Вывод результатов
+        print()
+        if "sdxl_env" in final_result:
+            icon = "✅" if final_result["sdxl_env"]["ok"] else "❌"
+            elapsed = final_result["sdxl_env"].get("elapsed", 0)
+            print(f"  {icon} SDXL окружение: {final_result['sdxl_env']['message']} ({elapsed} сек)")
+        if "sdxl_models" in final_result:
+            icon = "✅" if final_result["sdxl_models"]["ok"] else "❌"
+            elapsed = final_result["sdxl_models"].get("elapsed", 0)
+            print(f"  {icon} SDXL модели: {final_result['sdxl_models']['message']} ({elapsed} сек)")
+        if "ollama" in final_result:
+            icon = "✅" if final_result["ollama"]["ok"] else "❌"
+            elapsed = final_result["ollama"].get("elapsed", 0)
+            print(f"  {icon} Ollama: {final_result['ollama']['message']} ({elapsed} сек)")
+
+        # Если есть проблемы — выводим детали
+        if not final_result["all_ok"]:
+            print()
+            print("  ⚠ Обнаружены проблемы:")
+            for key, val in final_result.items():
+                if isinstance(val, dict) and not val.get("ok", True):
+                    print(f"     • {val['message']}")
+                    if val.get("action"):
+                        print(f"       → {val['action']}")
+
+        step_results["final_check"] = {
+            "name": "Финальная проверка",
+            "ok": final_result["all_ok"],
+            "skipped": False,
+            "message": "Все компоненты работают" if final_result["all_ok"] else "Обнаружены проблемы"
+        }
+
     # 9. Итог (честный, с анализом статусов шагов)
     print_header("Итог")
     failed_steps = [k for k, v in step_results.items() if not v.get("ok") and not v.get("skipped")]

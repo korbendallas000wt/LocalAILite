@@ -255,8 +255,15 @@ class StepSdxlEnv(InstallStep):
             return False
 
     def is_installed(self) -> StepStatus:
-        """Проверяет, создан ли SDXL venv и работают ли torch/diffusers.
-        Использует package_validator для детальной проверки пакетов (идемпотентность, баг #15).
+        """Быстрая проверка SDXL venv (идемпотентность, баг #15).
+
+        Проверяет (без тяжёлого импорта torch/diffusers):
+        1. venv существует, python запускается
+        2. Пакеты torch, diffusers, numpy установлены (через pip list)
+        3. Версия numpy < 2 (критично для старых CPU)
+
+        Глубокая проверка работоспособности (импорт torch/diffusers)
+        выполняется в installer/final_check.py после шага 8.
         """
         paths = self._get_paths()
         if not os.path.exists(paths['python_path']):
@@ -265,50 +272,66 @@ class StepSdxlEnv(InstallStep):
                 details=f"Ожидался: {paths['venv_path']}"
             )
 
-        # Проверка критических пакетов через валидатор (баг #15)
-        if verify_critical_imports:
-            validation = verify_critical_imports(paths['python_path'])
-            if not validation.valid:
-                error_msg = f"Критические пакеты не работают: {'; '.join(validation.errors[:2])}"
-                print(f"  ❌ {error_msg}")
-                return StepStatus.failed(
-                    "SDXL venv создан, но пакеты битые",
-                    details=error_msg
-                )
-
-        # Проверка numpy (критично для старых CPU, баг #15)
-        if check_numpy_version:
-            numpy_validation = check_numpy_version(paths['python_path'])
-            if not numpy_validation.valid:
-                error_msg = f"numpy не работает: {'; '.join(numpy_validation.errors[:2])}"
-                print(f"  ❌ {error_msg}")
-                return StepStatus.failed(
-                    "SDXL venv создан, но numpy битый",
-                    details=error_msg
-                )
-
-        # Глубокая проверка: импорт torch и diffusers
+        # Быстрая проверка: python запускается
         try:
             result = subprocess.run(
-                [paths['python_path'], "-c",
-                 "import torch; print(f'torch {torch.__version__}'); "
-                 "from diffusers import StableDiffusionXLPipeline; "
-                 "print('diffusers OK')"],
-                capture_output=True, text=True, timeout=120  # Увеличен для CPU-only (torch долго грузится на старых CPU)
+                [paths['python_path'], "--version"],
+                capture_output=True, text=True, timeout=5
             )
-            if result.returncode == 0:
-                return StepStatus.success(
-                    f"SDXL venv готов ({paths['venv_path']})",
-                    details=result.stdout.strip()
+            if result.returncode != 0:
+                return StepStatus.failed(
+                    "SDXL venv создан, но python не запускается",
+                    details=result.stderr.strip()[:200]
                 )
-            error_details = result.stderr.strip()[:300]
-            print(f"  ❌ Детали ошибки: {error_details}")
-            return StepStatus.failed(
-                "SDXL venv создан, но torch/diffusers не работают",
-                details=error_details
-            )
         except Exception as e:
-            return StepStatus.failed(f"Ошибка проверки SDXL venv: {e}")
+            return StepStatus.failed(f"Ошибка проверки python: {e}")
+
+        # Быстрая проверка: пакеты установлены (через pip list, без импорта)
+        try:
+            result = subprocess.run(
+                [paths['python_path'], "-m", "pip", "list", "--format=json"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode != 0:
+                return StepStatus.failed(
+                    "SDXL venv создан, но pip не работает",
+                    details=result.stderr.strip()[:200]
+                )
+
+            import json
+            packages = json.loads(result.stdout)
+            package_map = {p['name'].lower(): p['version'] for p in packages}
+
+            required = ['torch', 'diffusers', 'numpy']
+            missing = [p for p in required if p not in package_map]
+            if missing:
+                return StepStatus.failed(
+                    f"SDXL venv создан, но отсутствуют пакеты: {', '.join(missing)}",
+                    details="Требуется переустановка SDXL окружения"
+                )
+
+            # Проверка версии numpy < 2 (критично для старых CPU, баг #15)
+            numpy_version = package_map.get('numpy', '0.0.0')
+            try:
+                numpy_major = int(numpy_version.split('.')[0])
+                if numpy_major >= 2:
+                    return StepStatus.failed(
+                        f"numpy {numpy_version} >= 2.0 (требуется < 2 для старых CPU)",
+                        details="Баг #15: numpy 2.x не работает на CPU без SSE4.2. Требуется переустановка."
+                    )
+            except (ValueError, IndexError):
+                pass  # Не удалось распарсить версию — пропускаем
+
+        except subprocess.TimeoutExpired:
+            return StepStatus.failed("Таймаут проверки пакетов")
+        except Exception as e:
+            return StepStatus.failed(f"Ошибка проверки пакетов: {e}")
+
+        # Быстрая проверка пройдена
+        return StepStatus.success(
+            f"SDXL venv готов ({paths['venv_path']})",
+            details=f"torch {package_map.get('torch')}, numpy {numpy_version} (глубокая проверка в финале)"
+        )
 
     def install(self, progress=None) -> StepStatus:
         """Создаёт SDXL venv и устанавливает torch/diffusers."""
