@@ -1,0 +1,63 @@
+{
+  "python": {
+    "ui": { "min": [3, 10], "max": [3, 14] },
+    "sdxl": { "min": [3, 10], "max": [3, 12] },
+    "portable": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.12.13+20260807-x86_64-unknown-linux-gnu-install_only.tar.gz",
+      "version": "3.12.13",
+      "local_path": "bin/python/python/bin/python3"
+    },
+    "packages_312": {
+      "pacman": "python312",
+      "dnf": "python3.12",
+      "apt": "python3.12",
+      "zypper": "python312",
+      "emerge": "dev-lang/python:3.12",
+      "xbps": "python3.12"
+    }
+  },
+  "urls": {
+    "ollama": "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64.tar.zst",
+    "pytorch_cpu": "https://download.pytorch.org/whl/cpu",
+    "pytorch_cuda": "https://download.pytorch.org/whl/cu121"
+  },
+  "packages": {
+    "pyqt6_system": {
+      "pacman": "python-pyqt6",
+      "dnf": "python3-pyqt6",
+      "apt": "python3-pyqt6",
+      "zypper": "python3-pyqt6"
+    },
+    "numpy_system": {
+      "pacman": "python-numpy",
+      "dnf": "python3-numpy",
+      "apt": "python3-numpy",
+      "zypper": "python3-numpy"
+    },
+    "venv_module": {
+      "apt": "python{ver}-venv",
+      "dnf": "python{ver}-venv",
+      "zypper": "python{ver}-venv",
+      "pacman": null
+    }
+  },
+  "resources": {
+    "min_ram_gb": 8,
+    "recommended_ram_gb": 16,
+    "min_disk_gb": 20,
+    "sdxl_disk_gb": 10
+  },
+  "paths": {
+    "ollama_binary": "bin/ollama/bin/ollama",
+    "ollama_lib": "bin/ollama/lib",
+    "ollama_models": "bin/ollama/models",
+    "sdxl_venv": "venv_sdxl",
+    "sdxl_models": "data/models",
+    "sdxl_output": "data/output",
+    "portable_python": "bin/python/python/bin/python3"
+  },
+  "models": {
+    "ollama_default": "qwen2.5-coder:7b",
+    "sdxl_default": "Lykon/dreamshaper-xl-v2-turbo"
+  }
+}

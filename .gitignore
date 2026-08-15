@@ -1,0 +1,40 @@
+# Данные приложения (кроме источников моделей и реестра)
+data/history/
+data/init_images/
+data/logs/
+data/pids/
+data/previews/
+bin/ollama/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# === Тяжёлые и пользовательские папки (не коммитим) ===
+data/
+Backup/
+Repo/
+WORK/
+bin/
+venv_sdxl/
+
+# Временные и служебные файлы
+*.tmp
+*.log
+.cache/
