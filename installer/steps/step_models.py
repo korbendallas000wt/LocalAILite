@@ -306,6 +306,30 @@ class StepModels(InstallStep):
             time.sleep(0.5)
         return False
     
+
+    def _wait_model_registered(self, ollama_bin: str, model_name: str, models_path: str = "", timeout: int = 10) -> bool:
+        """Ждёт, пока модель зарегистрируется в Ollama сервере (баг #16).
+        Проверяет через 'ollama list' каждые 2 секунды.
+        """
+        import time
+        env = os.environ.copy()
+        if models_path:
+            env["OLLAMA_MODELS"] = models_path
+        
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                result = subprocess.run(
+                    [ollama_bin, "list"],
+                    capture_output=True, text=True, timeout=10, env=env
+                )
+                if result.returncode == 0 and model_name in result.stdout:
+                    return True
+            except Exception:
+                pass
+            time.sleep(2)
+        return False
+
     def _pull_ollama_model(self, ollama_bin: str, model_name: str, models_path: str = "", progress=None) -> StepStatus:
         """Скачивает Ollama модель через ollama pull.
         Если сервер не запущен — запускает его, скачивает модель, останавливает.
@@ -374,7 +398,27 @@ class StepModels(InstallStep):
             
             proc.wait()
             if proc.returncode == 0:
-                return StepStatus.success(f"Ollama модель {model_name} скачана")
+                # Баг #16: ожидаем регистрацию модели в сервере
+                self._report(progress, 97, f"Проверка регистрации модели в сервере...")
+                if self._wait_model_registered(ollama_bin, model_name, models_path, timeout=10):
+                    return StepStatus.success(f"Ollama модель {model_name} скачана и зарегистрирована")
+                
+                # Retry: пробуем ещё раз
+                self._report(progress, 98, f"Модель не зарегистрировалась — повторная попытка...")
+                retry_proc = subprocess.Popen(
+                    [ollama_bin, "pull", model_name],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, env=env
+                )
+                retry_proc.wait()
+                if retry_proc.returncode == 0:
+                    if self._wait_model_registered(ollama_bin, model_name, models_path, timeout=15):
+                        return StepStatus.success(f"Ollama модель {model_name} скачана (после retry)")
+                
+                return StepStatus.failed(
+                    f"Модель {model_name} скачалась, но не зарегистрировалась в Ollama сервере",
+                    details=f"Попробуйте перезапустить инсталлер или выполнить 'ollama pull {model_name}' вручную"
+                )
             else:
                 return StepStatus.failed(f"Ошибка скачивания Ollama модели: {model_name}")
         except Exception as e:
