@@ -119,7 +119,7 @@ class OllamaManager(QObject):
         app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
         # Открываем файл лога
-        log_dir = os.path.join(app_dir, "data", "logs")
+        log_dir = os.path.join(app_dir, "data", "shared", "logs")
         os.makedirs(log_dir, exist_ok=True)
         date_str = time.strftime("%Y-%m-%d")
         self._log_path = os.path.join(log_dir, f"ollama_{date_str}.log")
@@ -135,7 +135,7 @@ class OllamaManager(QObject):
             self._log_file = None
 
         # Создаём PID-файл
-        pid_dir = os.path.join(app_dir, "data", "pids")
+        pid_dir = os.path.join(app_dir, "data", "shared", "pids")
         os.makedirs(pid_dir, exist_ok=True)
         self._pid_path = os.path.join(pid_dir, "ollama.pid")
 

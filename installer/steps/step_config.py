@@ -25,11 +25,16 @@ class StepConfig(InstallStep):
 
     # Относительные подпапки внутри data/
     SUBDIRS = [
-        "history",      # История генерации: {timestamp}/step_NNNN.{pt,json}
-        "init_images",  # Подготовленные изображения для img2img
-        "logs",         # Логи diffusers_*.log и ollama.log
-        "pids",         # PID-файлы (ollama.pid, diffusers.pid)
-        "previews",     # Промежуточные PNG превью шагов (технические)
+        "ollama/models",           # Модели Ollama (blobs/manifests)
+        "diffusers/history",       # История генерации: {timestamp}/step_NNNN.{pt,json}
+        "diffusers/init_images",   # Подготовленные изображения для img2img
+        "diffusers/models",        # Модели SDXL (чекпоинты)
+        "diffusers/previews",      # Промежуточные PNG превью шагов (технические)
+        "image_prep/presets",      # Пресеты визуального редактора (на будущее)
+        "shared/config",           # local_config.json
+        "shared/registry",         # model_sources.json, models_registry.json
+        "shared/logs",             # Логи diffusers_*.log и ollama.log
+        "shared/pids",             # PID-файлы (ollama.pid, diffusers.pid)
     ]
 
     def __init__(self, base_dir: str = None):

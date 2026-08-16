@@ -1,18 +1,17 @@
 """
 Менеджер истории генерации.
-Сохраняет PNG на каждом шаге в data/history/{timestamp}/
+Сохраняет PNG на каждом шаге в data/diffusers/history/{timestamp}/
 """
 import os
 import json
 from datetime import datetime
 
-# Путь к папке истории: data/history/
-HISTORY_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "..",
-    "data",
-    "history"
-)
+# Путь к папке истории: data/diffusers/history/
+def get_history_dir() -> str:
+    """Возвращает путь к папке истории через Config (единый источник путей)."""
+    from utils.config import Config
+    config = Config()
+    return config.get_history_dir()
 
 
 def create_history_folder() -> str:
@@ -22,7 +21,8 @@ def create_history_folder() -> str:
         str: путь к созданной папке
     """
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    history_path = os.path.join(HISTORY_DIR, timestamp)
+    history_dir = get_history_dir()
+    history_path = os.path.join(history_dir, timestamp)
     os.makedirs(history_path, exist_ok=True)
     return history_path
 

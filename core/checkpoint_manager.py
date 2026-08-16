@@ -1,6 +1,6 @@
 """
 Менеджер чекпоинтов для Resume генерации.
-Работает с папками истории data/history/{timestamp}/.
+Работает с папками истории data/diffusers/history/{timestamp}/.
 Каждая папка содержит:
   - step_NNNN.pt  — латенты на каждом шаге
   - step_NNNN.json — метаданные шага (step, timestep, seed)
@@ -14,7 +14,7 @@ HISTORY_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "..",
     "data",
-    "history"
+    "diffusers", "history"
 )
 
 

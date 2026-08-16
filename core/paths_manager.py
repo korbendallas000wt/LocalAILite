@@ -92,9 +92,9 @@ class PathsManager:
         return {
             "ollama_binary": os.path.join(self.base_dir, "bin", "ollama", "bin", "ollama"),
             "ollama_lib": os.path.join(self.base_dir, "bin", "ollama", "lib", "ollama"),
-            "ollama_models": os.path.join(self.base_dir, "data", "ollama_models"),
+            "ollama_models": os.path.join(self.base_dir, "data", "ollama", "models"),
             "sdxl_venv": os.path.join(self.base_dir, "venv_sdxl"),
-            "sdxl_models": os.path.join(self.base_dir, "data", "models"),
+            "sdxl_models": os.path.join(self.base_dir, "data", "diffusers", "models"),
             "sdxl_output": os.path.expanduser("~/Pictures/LocalAILite"),
             "ollama_url": "http://localhost:11434",
         }
@@ -259,7 +259,7 @@ class PathsManager:
         """Читает ссылки на источники моделей из data/model_sources.json.
         Если файл не существует — возвращает дефолтные ссылки.
         """
-        sources_path = os.path.join(self.base_dir, "data", "model_sources.json")
+        sources_path = os.path.join(self.base_dir, "data", "shared", "registry", "model_sources.json")
         if os.path.exists(sources_path):
             try:
                 with open(sources_path, "r", encoding="utf-8") as f:

@@ -3,13 +3,15 @@ from PyQt6.QtCore import Qt, QTimer
 from ui.dialogs.settings.paths_settings_widget import PathsSettingsWidget
 from ui.dialogs.settings.diffusers_settings_widget import DiffusersSettingsWidget
 from ui.dialogs.settings.resources_settings_widget import ResourcesSettingsWidget
+from ui.dialogs.settings.update_settings_widget import UpdateSettingsWidget
 
 class SettingsDialog(QDialog):
     """Главный диалог настроек приложения"""
     
-    def __init__(self, config, parent=None):
+    def __init__(self, config, resource_manager=None, parent=None):
         super().__init__(parent)
         self.config = config
+        self.resource_manager = resource_manager
         self.setWindowTitle("Настройки")
         self.setMinimumSize(500, 500)
         layout = QVBoxLayout(self)
@@ -34,6 +36,10 @@ class SettingsDialog(QDialog):
         self.resources_widget = ResourcesSettingsWidget(config)
         self.tabs.addTab(self.resources_widget, "⚙️ Ресурсы")
 
+        # Вкладка Обновления
+        self.update_widget = UpdateSettingsWidget(config, resource_manager)
+        self.tabs.addTab(self.update_widget, "🔄 Обновления")
+
         layout.addWidget(self.tabs, 1)
 
         # Кнопки OK/Cancel
@@ -46,6 +52,12 @@ class SettingsDialog(QDialog):
         layout.addWidget(button_box)
         
         self._auto_close_timer = None
+
+    def closeEvent(self, event):
+        """Останавливаем потоки обновлений перед закрытием."""
+        if hasattr(self, 'update_widget') and self.update_widget:
+            self.update_widget.updater.shutdown()
+        super().closeEvent(event)
 
     def _on_all_valid(self):
         """Все поля валидны — автозакрытие через 1 сек"""
@@ -97,5 +109,6 @@ class SettingsDialog(QDialog):
         if self.diffusers_widget:
             self.diffusers_widget.save_settings()
         self.resources_widget.save_settings()
+        self.update_widget.save_settings()
         
         self.accept()

@@ -1,7 +1,25 @@
 {
   "python": {
-    "ui": { "min": [3, 10], "max": [3, 14] },
-    "sdxl": { "min": [3, 10], "max": [3, 12] },
+    "ui": {
+      "min": [
+        3,
+        10
+      ],
+      "max": [
+        3,
+        14
+      ]
+    },
+    "sdxl": {
+      "min": [
+        3,
+        10
+      ],
+      "max": [
+        3,
+        12
+      ]
+    },
     "portable": {
       "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.12.13+20260807-x86_64-unknown-linux-gnu-install_only.tar.gz",
       "version": "3.12.13",
@@ -50,9 +68,9 @@
   "paths": {
     "ollama_binary": "bin/ollama/bin/ollama",
     "ollama_lib": "bin/ollama/lib",
-    "ollama_models": "bin/ollama/models",
+    "ollama_models": "data/ollama/models",
     "sdxl_venv": "venv_sdxl",
-    "sdxl_models": "data/models",
+    "sdxl_models": "data/diffusers/models",
     "sdxl_output": "data/output",
     "portable_python": "bin/python/python/bin/python3"
   },

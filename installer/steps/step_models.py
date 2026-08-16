@@ -115,7 +115,7 @@ class StepModels(InstallStep):
         """Возвращает путь к папке моделей SDXL."""
         models_path = self._read_config_value("sdxl/models_path", "")
         if not models_path:
-            models_path = os.path.join(self.base_dir, "data", "models")
+            models_path = os.path.join(self.base_dir, "data", "diffusers", "models")
         return models_path
 
     def _get_paths(self) -> dict:
@@ -125,11 +125,11 @@ class StepModels(InstallStep):
             pass  # Используем путь из Config
         else:
             # Fallback на дефолт
-            models_path = os.path.join(self.base_dir, "data", "models")
+            models_path = os.path.join(self.base_dir, "data", "diffusers", "models")
         
         ollama_models_path = self._read_config_value("ollama/models_path", "")
         if not ollama_models_path:
-            ollama_models_path = os.path.join(self.base_dir, "data", "ollama_models")
+            ollama_models_path = os.path.join(self.base_dir, "data", "ollama", "models")
         
         return {
             "models_path": models_path,

@@ -20,7 +20,7 @@ from pathlib import Path
 class Config:
     def __init__(self):
         self._data_dir = self._get_data_dir()
-        self._config_path = self._data_dir / "local_config.json"
+        self._config_path = self._data_dir / "shared" / "config" / "local_config.json"
         self._data = {"version": 1, "settings": {}, "features": {}}
         self._load()
 
@@ -198,15 +198,15 @@ class Config:
 
     def get_previews_dir(self):
         """Папка для промежуточных превью (технические файлы)"""
-        return os.path.join(self.get_data_dir(), "previews")
+        return os.path.join(self.get_data_dir(), "diffusers", "previews")
 
     def get_history_dir(self):
         """Папка для истории генерации (PNG на каждом шаге)"""
-        return os.path.join(self.get_data_dir(), "history")
+        return os.path.join(self.get_data_dir(), "diffusers", "history")
 
     def get_logs_dir(self):
         """Папка для логов (технические файлы)"""
-        return os.path.join(self.get_data_dir(), "logs")
+        return os.path.join(self.get_data_dir(), "shared", "logs")
 
     # === Ollama (локальный бинарник) ===
     def get_ollama_binary_path(self):
@@ -230,11 +230,11 @@ class Config:
     # === Image Prep ===
     def get_init_images_dir(self):
         """Папка для подготовленных изображений"""
-        return os.path.join(self.get_data_dir(), "init_images")
+        return os.path.join(self.get_data_dir(), "diffusers", "init_images")
 
     def get_models_registry_path(self):
         """Путь к файлу реестра моделей"""
-        return os.path.join(self.get_data_dir(), "models_registry.json")
+        return os.path.join(self.get_data_dir(), "shared", "registry", "models_registry.json")
 
     # === Features (усечённое приложение) ===
     def get_feature(self, feature_name: str, default: bool = True) -> bool:

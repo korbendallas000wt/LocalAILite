@@ -115,6 +115,15 @@ class MainWindow(QMainWindow):
         from PyQt6.QtCore import QTimer
         if self.ollama_manager:
             QTimer.singleShot(100, self.ollama_manager.start)
+
+        # Проверка обновлений (через 3 сек после старта)
+        from core.updater import Updater
+        self.updater = Updater()
+        self.updater.update_available.connect(self._on_update_available)
+        self.updater.check_failed.connect(
+            lambda err: print(f"Updater: проверка не удалась: {err}")
+        )
+        QTimer.singleShot(3000, self.updater.check_for_updates)
     
     def _create_menu(self):
         menubar = self.menuBar()
@@ -124,10 +133,9 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
-        settings_menu = menubar.addMenu("Настройки")
-        settings_action = QAction("Настройки...", self)
-        settings_action.triggered.connect(self._show_settings_dialog)
-        settings_menu.addAction(settings_action)
+        self.settings_action = QAction("Настройки", self)
+        self.settings_action.triggered.connect(self._show_settings_dialog)
+        menubar.addAction(self.settings_action)
         
         # Освобождение ресурсов
         tools_menu = menubar.addMenu("Инструменты")
@@ -141,7 +149,7 @@ class MainWindow(QMainWindow):
         # Сырые значения (без fallback на дефолты) для корректного детектирования
         old_raw = pm.get_raw_paths(self.config)
 
-        dialog = SettingsDialog(self.config, self)
+        dialog = SettingsDialog(self.config, self.resource_manager, self)
         if dialog.exec():
             self._update_status()
             new_raw = pm.get_raw_paths(self.config)
@@ -470,6 +478,58 @@ class MainWindow(QMainWindow):
         """Скачивает Ollama"""
         self.ollama_tab._set_status("⚠ Скачивание Ollama пока не реализовано", "orange")
     
+
+    # === Обновления ===
+
+    def _on_update_available(self, current, new):
+        """Найдена новая версия — мигаем в статусе и ставим точку в меню"""
+        self._update_menu_badge(True)
+        self._show_update_notification(
+            f"⚠ Доступно обновление {new} (текущая {current})"
+        )
+
+    def _update_menu_badge(self, has_update):
+        """Добавляет/убирает точку к пункту Настройки"""
+        if has_update:
+            self.settings_action.setText("Настройки ●")
+        else:
+            self.settings_action.setText("Настройки")
+
+    def _show_update_notification(self, message):
+        """Мигает сообщением об обновлении в статусе активной вкладки"""
+        from PyQt6.QtCore import QTimer
+        # Останавливаем предыдущий таймер, если есть
+        if hasattr(self, '_blink_timer') and self._blink_timer.isActive():
+            self._blink_timer.stop()
+        # Сохраняем текущий статус активной вкладки
+        active_tab = self.tabs.currentWidget()
+        if hasattr(active_tab, '_bar_state'):
+            self._blink_saved_status = active_tab._bar_state.get("status", "Готово")
+            self._blink_saved_color = active_tab._bar_state.get("status_color", "#DAA520")
+        else:
+            self._blink_saved_status = "Готово"
+            self._blink_saved_color = "green"
+        self._blink_message = message
+        self._blink_count = 0
+        self._blink_max = 6  # 3 цикла on/off (~3 секунды при 500 мс)
+        self._blink_timer = QTimer()
+        self._blink_timer.setInterval(500)
+        self._blink_timer.timeout.connect(self._blink_step)
+        self._blink_timer.start()
+        # Сразу показываем сообщение
+        self._set_active_tab_status(self._blink_message, "orange")
+
+    def _blink_step(self):
+        """Один шаг мигания"""
+        self._blink_count += 1
+        if self._blink_count % 2 == 1:
+            self._set_active_tab_status(self._blink_saved_status, self._blink_saved_color)
+        else:
+            self._set_active_tab_status(self._blink_message, "orange")
+        if self._blink_count >= self._blink_max:
+            self._blink_timer.stop()
+            self._set_active_tab_status(self._blink_saved_status, self._blink_saved_color)
+
     def closeEvent(self, event):
         """Показывает диалог очистки при закрытии"""
         # Сохраняем состояние
