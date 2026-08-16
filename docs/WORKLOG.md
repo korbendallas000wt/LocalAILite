@@ -944,3 +944,63 @@ detection["os"]["pkg_manager"]  # "pacman", "dnf", "apt", "zypper", "emerge", "x
 - 🟡 Прогон на openSUSE Tumbleweed
 - 🟡 Прогон на Ubuntu 24.04
 - 🟡 sudo chcon таймаут (баг #10) — capture_output
+
+---
+
+## Сессия 2026-08-16 (ночь, продолжение)
+
+### Что сделано
+
+✅ **Модуль обновлений (core/updater.py) — проверочная часть**
+- Создан `core/updater.py` с фоновой проверкой версий (QThread, urllib)
+- Читает локальный `VERSION` (0.1.0) и сравнивает с remote `VERSION` в ветке main
+- URL пока возвращает 404 (файл VERSION ещё не в main) — корректно обрабатывается
+- Интеграция в `main_window.py`:
+  - Мигание оранжевым 3-5 раз в статусбаре при наличии обновления
+  - Точка ● в меню "Настройки" (убран вложенный дубль меню)
+  - Запуск проверки через `QTimer.singleShot(3000)` после старта
+- Концепция не нарушена: SharedBottomBar пассивный, всё через `_set_active_tab_status`
+- Коммит: `79935d6`
+
+✅ **Второй ярлык для отладки**
+- Создан `LocalAILite-отладка` — .desktop файл с `Terminal=true`
+- Открывает терминал при запуске, видно все логи и сообщения Updater
+- Коммит: `79935d6`
+
+✅ **Полная миграция структуры data/ по компонентам**
+- Новая структура:
+  - `data/ollama/models/` — модели Ollama (blobs/manifests)
+  - `data/diffusers/{history,init_images,models,previews}/` — данные SDXL
+  - `data/shared/{config,registry,logs,pids}/` — общие данные
+  - `data/image_prep/presets/` — зарезервировано для визуального редактора
+- Обновлены пути в 11 файлах:
+  - `utils/config.py` — `get_history_dir`, `get_previews_dir`, `get_logs_dir`, `get_init_images_dir`, путь к `local_config.json`
+  - `core/paths_manager.py` — дефолты `ollama_models`, `sdxl_models`, путь к `model_sources.json`
+  - `core/ollama_manager.py` — пути к логам и PID-файлам
+  - `core/history_manager.py` — использование `Config.get_history_dir()` вместо хардкода
+  - `core/checkpoint_manager.py` — путь к истории
+  - `core/diffusers_worker.py` — PID-файлы
+  - `ui/cleanup_dialog.py` — PID-файлы
+  - `ui/tabs/diffusers_settings_panel.py` — путь к истории
+  - `installer/steps/step_config.py` — SUBDIRS (новая структура)
+  - `installer/steps/step_models.py` — пути к моделям
+  - `installer/config.json` — пути `ollama_models`, `sdxl_models`
+- Бэкап данных в `Backup/before_data_migration/` (66M)
+- Приложение запускается штатно, все данные подхватились (промпты, история, настройки)
+- Коммит: `b846f3a`
+
+### Результат
+
+- ✅ Модуль обновлений работает: фоновая проверка, мигание, точка в меню
+- ✅ Структура data/ масштабируемая: компонент наверху, типы внутри
+- ✅ Все пути централизованы через `Config` и `PathsManager`, хардкодов нет
+- ✅ Установщик создаёт правильную структуру при новой установке
+- ✅ Пользовательские данные (история, промпты) сохранены при миграции
+
+### Что дальше
+
+- 🟡 Модуль обновлений: скачивание/установка обновлений (замена файлов, обновление ссылок, откат)
+- 🟡 Менеджер моделей в приложении (добавление/удаление через UI)
+- 🟡 Улучшение диагностируемости (логирование, детальные ошибки)
+- 🟡 Uninstaller для чистых тестов
+
