@@ -1,0 +1,20 @@
+[Desktop Entry]
+Categories=Utility;
+Comment[ru_RU]=Загрузить модель ИИ (с терминалом)
+Comment=Загрузить модель ИИ (с терминалом)
+Exec=python3 /home/lin/Scripts/LocalAILite/main.py
+GenericName[ru_RU]=
+GenericName=
+Icon=/home/lin/Изображения/ICO/LIN/OIP-2316899301.jpg
+MimeType=
+Name[ru_RU]=LocalAILite (отладка)
+Name=LocalAILite (отладка)
+NoDisplay=false
+Path=/home/lin/Scripts/LocalAILite/
+StartupNotify=true
+Terminal=true
+TerminalOptions=
+Type=Application
+Version=1.0
+X-KDE-SubstituteUID=false
+X-KDE-Username=
