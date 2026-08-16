@@ -149,7 +149,7 @@ class MainWindow(QMainWindow):
         # Сырые значения (без fallback на дефолты) для корректного детектирования
         old_raw = pm.get_raw_paths(self.config)
 
-        dialog = SettingsDialog(self.config, self)
+        dialog = SettingsDialog(self.config, self.resource_manager, self)
         if dialog.exec():
             self._update_status()
             new_raw = pm.get_raw_paths(self.config)
