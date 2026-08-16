@@ -30,14 +30,15 @@
     │   ├── paths_manager.py                 # Единый модуль управления путями (v2.0)
     │   ├── checkpoint_manager.py            # Чекпоинты генерации: JSON + PT, архивация
     │   ├── diffusers_worker.py              # QProcess-обёртка для generate_diffusers.py
-    │   ├── history_manager.py               # Менеджер истории: data/history/{timestamp}/
+    │   ├── history_manager.py               # Менеджер истории: data/diffusers/history/{timestamp}/
     │   ├── image_processor.py               # Обработка изображений: resize, crop, letterbox, stretch
     │   ├── markdown_parser.py               # Markdown в HTML (подсветка кода, ссылки, списки)
     │   ├── models_registry.py               # Реестр моделей v2.0: короткое имя ↔ {path, full_name, type}
     │   ├── ollama_client.py                 # QThread-клиент к Ollama API (/api/chat)
     │   ├── ollama_manager.py                # Управление ollama serve (старт/стоп/конфликты портов)
     │   ├── resource_manager.py              # Управление ресурсом: acquire/release, 2 арендатора
-    │   └── resource_monitor.py              # Мониторинг RAM/CPU, реальная проверка RAM, лимиты, PID
+    │   ├── resource_monitor.py              # Мониторинг RAM/CPU, реальная проверка RAM, лимиты, PID
+    │   └── updater.py                     # Модуль обновлений: фоновая проверка версий (QThread + urllib)
     │
     ├── scripts/                             # CLI-скрипты (запускаются в venv)
     │   ├── generate_diffusers.py            # Генерация SDXL: callback_on_step_end, чекпоинты, точный resume
@@ -68,7 +69,7 @@
     │       └── image_prep_panel.py          # Правая панель Visual editor (пресет, crop mode)
     │
     ├── utils/
-    │   └── config.py                        # QSettings-обёртка + пути (data/, bin/ollama/, Ollama)
+    │   └── config.py                        # JSON-конфиг (local_config.json) + пути к data/ по компонентам
     │
     ├── installer/                           # Инсталлятор (идемпотентный, 8 шагов + финальная проверка)
     │   ├── cli.py                           # Точка входа: python3 installer/cli.py
@@ -90,13 +91,20 @@
     ├── Repo/                                # Git-репозиторий для ветки main (стабильная)
     │
     └── data/                                # Рабочие данные (в gitignore)
-        ├── model_sources.json               # Ссылки на источники моделей (HuggingFace, CivitAI)
-        ├── models_registry.json             # Реестр моделей v2.0
-        ├── history/                         # История генерации
-        ├── init_images/                     # Подготовленные изображения для img2img
-        ├── logs/                            # Логи diffusers_*.log и ollama.log
-        ├── pids/                            # PID-файлы (ollama.pid, diffusers.pid)
-        └── previews/                        # Промежуточные PNG превью шагов (технические)
+        ├── ollama/
+        │   └── models/                 # Модели Ollama (blobs/manifests)
+        ├── diffusers/
+        │   ├── history/                # История генерации (timestamp/step_NNNN.{pt,json})
+        │   ├── init_images/            # Подготовленные изображения
+        │   ├── models/                 # Модели SDXL (чекпоинты)
+        │   └── previews/               # Промежуточные превью
+        ├── image_prep/
+        │   └── presets/                # Зарезервировано для визуального редактора
+        └── shared/
+            ├── config/                 # local_config.json
+            ├── registry/               # model_sources.json, models_registry.json
+            ├── logs/                   # Логи (ollama_*.log, diffusers_*.log)
+            └── pids/                   # PID-файлы
 
 ## Быстрый доступ к модулям (raw-ссылки)
 
@@ -127,7 +135,7 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/checkpoint_manager.py
 - **diffusers_worker.py** — QProcess-обёртка для generate_diffusers.py
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/diffusers_worker.py
-- **history_manager.py** — менеджер истории: data/history/{timestamp}/
+- **history_manager.py** — менеджер истории: data/diffusers/history/{timestamp}/
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/history_manager.py
 - **image_processor.py** — обработка изображений: resize, crop, letterbox, stretch
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/image_processor.py
@@ -143,6 +151,9 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/resource_manager.py
 - **resource_monitor.py** — мониторинг RAM/CPU, лимиты, PID
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/resource_monitor.py
+- **updater.py** — модуль обновлений: фоновая проверка версий (QThread + urllib)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/updater.py
+
 
 ### installer/ — инсталлятор
 
@@ -219,7 +230,7 @@
 
 ### utils/
 
-- **config.py** — QSettings-обёртка + пути (data/, bin/ollama/, Ollama)
+- **config.py** — JSON-конфиг (local_config.json) + пути к data/ по компонентам
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/utils/config.py
 
 ### docs/ — документация
@@ -243,7 +254,7 @@
     Генерация SDXL: SharedBottomBar -> DiffusersTab.handle_prompt -> DiffusersWorker (QProcess) -> scripts/generate_diffusers.py -> callback_on_step_end -> history_manager
     Старт Ollama: MainWindow.init -> OllamaManager.start -> проверка порта -> QProcess("ollama serve") с LD_LIBRARY_PATH
     Закрытие: MainWindow.closeEvent -> CleanupDialog -> CleanupThread: стоп Diffusers -> выгрузка Ollama -> стоп сервера -> gc.collect()
-    Чекпоинты: data/history/{timestamp}/step_NNNN.pt (latents + scheduler + generator) + step_NNNN.json (метаданные)
+    Чекпоинты: data/diffusers/history/{timestamp}/step_NNNN.pt (latents + scheduler + generator) + step_NNNN.json (метаданные)
     Resume: DiffusersTab -> DiffusersWorker (--resume --resume-step-file) -> generate_diffusers.py (срез timesteps + компенсация init_noise_sigma)
     Инсталлер: cli.py -> detector -> advisor -> шаги 0-8 -> final_check (глубокие проверки) -> итог
 
