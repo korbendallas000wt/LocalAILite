@@ -166,7 +166,7 @@ class DiffusersWorker(QObject):
             # Сохраняем PID в файл
             from utils.config import Config
             config = Config()
-            pid_dir = os.path.join(config.get_data_dir(), "pids")
+            pid_dir = os.path.join(config.get_data_dir(), "shared", "pids")
             os.makedirs(pid_dir, exist_ok=True)
             pid_path = os.path.join(pid_dir, "diffusers.pid")
             try:
@@ -189,7 +189,7 @@ class DiffusersWorker(QObject):
         # Удаляем PID-файл
         from utils.config import Config
         config = Config()
-        pid_path = os.path.join(config.get_data_dir(), "pids", "diffusers.pid")
+        pid_path = os.path.join(config.get_data_dir(), "shared", "pids", "diffusers.pid")
         if os.path.exists(pid_path):
             try:
                 os.remove(pid_path)

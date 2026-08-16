@@ -155,7 +155,7 @@ class DiffusersSettingsPanel(QWidget):
         
         # Начальная папка: data/history/ (абсолютный путь)
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        history_dir = os.path.join(project_root, "data", "history")
+        history_dir = os.path.join(project_root, "data", "diffusers", "history")
         
         # Один диалог выбора файла, фильтр *.pt
         file_path, _ = QFileDialog.getOpenFileName(

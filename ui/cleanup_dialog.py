@@ -39,7 +39,7 @@ class CleanupThread(QThread):
             
             # 1.2. Проверяем PID-файл (на случай, если worker потерялся)
             from core.resource_monitor import ResourceMonitor
-            pid_path = os.path.join(self.config.get_data_dir(), "pids", "diffusers.pid")
+            pid_path = os.path.join(self.config.get_data_dir(), "shared", "pids", "diffusers.pid")
             pid = ResourceMonitor.read_pid_file(pid_path)
             if pid > 0 and ResourceMonitor.is_process_alive(pid):
                 ResourceMonitor.kill_process_by_pid(pid, force=True)
@@ -100,7 +100,7 @@ class CleanupThread(QThread):
             if self.ollama_manager and self.ollama_manager.is_our_process():
                 # Убиваем по PID (безопасно из QThread, не трогаем QProcess)
                 from core.resource_monitor import ResourceMonitor
-                pid_path = os.path.join(self.config.get_data_dir(), "pids", "ollama.pid")
+                pid_path = os.path.join(self.config.get_data_dir(), "shared", "pids", "ollama.pid")
                 pid = ResourceMonitor.read_pid_file(pid_path)
                 if pid > 0 and ResourceMonitor.is_process_alive(pid):
                     ResourceMonitor.kill_process_by_pid(pid, force=False)
