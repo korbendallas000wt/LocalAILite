@@ -2,7 +2,7 @@
 
 Приложение для работы с локальными AI-моделями: чат с Ollama + генерация изображений (SDXL/Diffusers) + визуальный редактор.
 
-**Платформа:** Manjaro Linux, PyQt6, Python 3.10-3.12
+**Платформа:** Linux (Manjaro/Arch, Fedora, Ubuntu, openSUSE, Void), PyQt6, Python 3.10-3.12
 
 ---
 
@@ -32,6 +32,7 @@
 | ui/cleanup_dialog.py | v1.2.1 | Диалог освобождения ресурсов при закрытии (5 шагов) |
 | ui/chat_widget.py | v1.0.0 | QTextBrowser + стриминг токенов + копирование кода |
 | ui/settings_panel.py | v1.0.0 | Правая панель Ollama (модель, temperature, timeout) |
+| ui/dialogs/settings/update_settings_widget.py | v1.5.0 | Вкладка "Обновления" в настройках: версии, CHANGELOG, прогресс, кнопки |
 
 ### Вкладки
 
@@ -60,6 +61,7 @@
 | core/paths_manager.py | v1.4.0 | Единый модуль управления путями: ключи QSettings, дефолты, валидация с уровнями, источники моделей |
 | core/models_registry.py | v1.4.0 | Реестр моделей v2.0: короткое имя ↔ {path, full_name, type}, KNOWN_MODELS, типы hf_cache/file/folder |
 | core/markdown_parser.py | v1.0.0 | Markdown в HTML с адаптацией под системную тему KDE |
+| core/updater.py | v2.0 | Модуль обновлений: проверка версий, скачивание, установка из ветки main, логирование |
 
 ### Скрипты (scripts/)
 
@@ -69,12 +71,6 @@
 | scripts/encode_image.py | v1.1.0 | Кодирование изображения в latents через VAE (для img2img) |
 | scripts/test_vae_roundtrip.py | v1.1.0 | Тест VAE encode/decode roundtrip |
 | scripts/compare_images.py | v1.2.1 | Попиксельное сравнение изображений через numpy (для проверки точности resume) |
-
-### Утилиты
-
-| Модуль | Версия | Роль |
-|--------|--------|------|
-| get_context.sh | v1.2.1 | Точечная выгрузка файлов проекта для LLM (вместо полного full_context.py) |
 
 ### Инсталлятор (installer/)
 
@@ -149,7 +145,7 @@ LocalAILite/
 │       └── image_prep_panel.py          # Панель Visual editor
 │
 ├── utils/
-│   └── config.py                        # QSettings-обёртка
+│   └── config.py                        # JSON-конфиг (local_config.json) + компонентные пути data/
 │
 ├── installer/                           # Инсталлятор (уровень 1+2: бутстрап + полная установка)
 │   ├── cli.py                           # Точка входа: python3 installer/cli.py
@@ -166,11 +162,20 @@ LocalAILite/
 │       └── step_models.py               # Скачивание моделей (уровень 2)
 │
 └── data/                                # Рабочие данные (в gitignore)
-    ├── history/                         # История генерации: {timestamp}/step_NNNN.{png,pt,json}
-    ├── init_images/                     # Подготовленные изображения для img2img
-    ├── logs/                            # Логи
-    ├── pids/                            # PID-файлы
-    └── previews/                        # Промежуточные PNG превью
+    ├── ollama/
+    │   └── models/                      # Модели Ollama (blobs/manifests)
+    ├── diffusers/
+    │   ├── history/                     # История генерации ({timestamp}/step_NNNN.{pt,json})
+    │   ├── init_images/                 # Подготовленные изображения для img2img
+    │   ├── models/                      # Модели SDXL (чекпоинты)
+    │   └── previews/                    # Промежуточные PNG превью
+    ├── image_prep/
+    │   └── presets/                     # Зарезервировано для визуального редактора
+    └── shared/
+        ├── config/                      # local_config.json
+        ├── registry/                    # model_sources.json, models_registry.json
+        ├── logs/                        # Логи (ollama_*.log, diffusers_*.log)
+        └── pids/                        # PID-файлы
 ```
 
 ---
@@ -226,6 +231,7 @@ python main.py
 
 ## 📊 Ключевые возможности
 
+- **Модуль обновлений (v2.0)**: автоматическая проверка версий, скачивание и установка из ветки main с логированием. Индикаторы в UI: мигание статусбара + точка в меню. Вкладка "Обновления" в настройках с CHANGELOG
 - **Инсталлятор**: детекция железа, идемпотентная установка (уровень 1+2), гибридная стратегия PyQt6 (pip/system) — `python3 installer/cli.py`
 - **PathsManager**: единый модуль управления путями — дефолты, валидация с уровнями, источники моделей
 - **Реестр моделей v2.0**: короткие имена (SDXL Base 1.0), типы (hf_cache/file/folder), KNOWN_MODELS
@@ -256,7 +262,7 @@ python main.py
 | **QProcess для тяжёлых задач** | Diffusers запускается в отдельном процессе | Изоляция, возможность остановки, логирование |
 | **QThread для сетевых запросов** | OllamaClient работает в отдельном потоке | Не блокирует UI |
 | **Сигнальная шина** | pyqtSignal для навигации и передачи данных между вкладками | Слабая связность, безопасное переключение контекста |
-| **Единый конфиг** | QSettings-обёртка (utils/config.py) | Централизованное управление настройками |
+| **Единый конфиг** | JSON-конфиг local_config.json + QSettings (utils/config.py) | Централизованное управление настройками |
 | **Чекпоинты = атомарность** | JSON + PT, архивация с timestamp | Защита от потери прогресса |
 | **Ресурсы = мониторинг** | ResourceMonitor + ResourceManager, лимиты RAM/CPU | Предотвращение OOM, контроль нагрузки |
 | **Очистка = корректность** | CleanupDialog с 5 шагами при закрытии | Освобождение памяти, остановка процессов |
