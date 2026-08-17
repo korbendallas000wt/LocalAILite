@@ -38,7 +38,7 @@
     │   ├── ollama_manager.py                # Управление ollama serve (старт/стоп/конфликты портов)
     │   ├── resource_manager.py              # Управление ресурсом: acquire/release, 2 арендатора
     │   ├── resource_monitor.py              # Мониторинг RAM/CPU, реальная проверка RAM, лимиты, PID
-    │   └── updater.py                     # Модуль обновлений: фоновая проверка версий (QThread + urllib)
+    │   └── updater.py                     # Модуль обновлений v2.0: проверка + скачивание + установка (QThread + urllib)
     │
     ├── scripts/                             # CLI-скрипты (запускаются в venv)
     │   ├── generate_diffusers.py            # Генерация SDXL: callback_on_step_end, чекпоинты, точный resume
@@ -60,7 +60,8 @@
     │   │       ├── settings_dialog.py       # Окно настроек (вкладки)
     │   │       ├── paths_settings_widget.py         # Вкладка Общие
     │   │       ├── diffusers_settings_widget.py     # Вкладка Diffusers
-    │   │       └── resources_settings_widget.py     # Вкладка Ресурсы
+    │   │       ├── resources_settings_widget.py     # Вкладка Ресурсы
+ │   │       └── update_settings_widget.py        # Вкладка Обновления (v2.0)
     │   └── tabs/                            # Вкладки главного окна
     │       ├── ollama_tab.py                # Чат: ChatWidget + SettingsPanel + OllamaClient
     │       ├── diffusers_tab.py             # Генерация: preview + settings + DiffusersWorker
@@ -151,7 +152,7 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/resource_manager.py
 - **resource_monitor.py** — мониторинг RAM/CPU, лимиты, PID
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/resource_monitor.py
-- **updater.py** — модуль обновлений: фоновая проверка версий (QThread + urllib)
+- **updater.py** — модуль обновлений v2.0: проверка + скачивание + установка (QThread + urllib)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/updater.py
 
 
@@ -217,6 +218,8 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/history_save_dialog.py
 - **dialogs/settings/settings_dialog.py** — окно настроек (вкладки)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/settings/settings_dialog.py
+dialogs/settings/update_settings_widget.py — вкладка Обновления (v2.0)
+https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/settings/update_settings_widget.py
 - **tabs/ollama_tab.py** — чат: ChatWidget + SettingsPanel + OllamaClient
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/tabs/ollama_tab.py
 - **tabs/diffusers_tab.py** — генерация: preview + settings + DiffusersWorker
