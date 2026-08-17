@@ -2,7 +2,7 @@
 
 ## ЦЕЛЬ ПРОЕКТА
 
-Модульное приложение на PyQt6 для работы с локальными AI-моделями на Manjaro Linux. Три режима: чат с Ollama + генерация изображений (SDXL/Diffusers) + визуальный редактор. Единый GUI с вкладками, общая нижняя панель, управление ресурсами, чекпоинты генерации, история шагов.
+Модульное приложение на PyQt6 для работы с локальными AI-моделями на Linux (5 дистрибутивов: Manjaro, Fedora, Debian, openSUSE, Ubuntu). Три режима: чат с Ollama + генерация изображений (SDXL/Diffusers) + визуальный редактор. Единый GUI с вкладками, общая нижняя панель, управление ресурсами, чекпоинты генерации, история шагов.
 
 ---
 
@@ -30,6 +30,7 @@
 | ui/dialogs/settings/paths_settings_widget.py | v1.0.0 | Вкладка Общие. Настройки путей с валидацией в реальном времени. |
 | ui/dialogs/settings/diffusers_settings_widget.py | v1.0.0 | Вкладка Diffusers. Device, safety_checker, управление моделями. |
 | ui/dialogs/settings/resources_settings_widget.py | v1.0.0 | Вкладка Ресурсы. max_ram_percent, cpu_cores, cpu_priority. |
+| ui/dialogs/settings/update_settings_widget.py | v1.5.0 | Вкладка Обновления. Проверка версий, скачивание, установка, CHANGELOG, перезагрузка. |
 
 ### Ядро (core/)
 
@@ -48,6 +49,7 @@
 | core/path_validator.py | v1.1.0 | Валидация путей (venv, модели, output, Ollama URL, бинарник Ollama, модели Ollama), проверка доступности, подсчёт моделей. |
 | core/paths_manager.py | v1.4.0 | Единый модуль управления путями: ключи QSettings, дефолты, размеры, labels, критичность, get_raw_paths/get_effective_paths/set_path, валидация с уровнями (0/1/2), источники моделей из data/model_sources.json. |
 | core/markdown_parser.py | v1.0.0 | Парсер Markdown в HTML с адаптацией под системную тему KDE, подсветка кода, кнопки копирования, обработка ссылок, списков, заголовков. |
+| core/updater.py | v2.0 | Модуль обновлений: проверка версий, скачивание, установка из ветки main, логирование, graceful shutdown. |
 
 ### Скрипты (scripts/)
 
@@ -62,8 +64,7 @@
 
 | Модуль | Версия | Роль |
 |--------|--------|------|
-| utils/config.py | v1.1.0 | QSettings-обёртка с методами для Ollama, Diffusers, путей, истории, init_images. Миграция из старой версии OllamaChat. |
-| get_context.sh | v1.2.1 | Точечная выгрузка файлов проекта для LLM (вместо полного full_context.py). |
+| utils/config.py | v1.5.0 | JSON-конфиг (data/shared/config/local_config.json) + пути к data/ по компонентам (ollama/, diffusers/, image_prep/, shared/). |
 
 ### Инсталлятор (installer/)
 
@@ -107,15 +108,17 @@
 ## КОНТРАКТЫ
 
 ### Данные
-- Все настройки хранятся в QSettings через utils/config.py
-- Чекпоинты: data/history/{timestamp}/step_NNNN.json (метаданные) + step_NNNN.pt (latents, scheduler, generator)
-- Архивные чекпоинты: data/history/{timestamp}/step_NNNN.{pt,json}
-- История генерации: data/history/{timestamp}/step_NNNN.pt + step_NNNN.json + metadata.json
-- Логи: data/logs/diffusers_*.log, data/logs/ollama.log
-- PID-файлы: data/pids/ollama.pid, data/pids/diffusers.pid
-- Превью: data/previews/sdxl_{seed}_step{step:04d}.png (технические)
-- Init images: data/init_images/ (подготовленные для img2img)
-- Реестр моделей: data/models_registry.json
+Структура `data/` организована по компонентам (миграция v1.5.0):
+- `data/ollama/models/` — модели Ollama (blobs/manifests)
+- `data/diffusers/history/{timestamp}/` — история генерации: step_NNNN.pt (latents+scheduler+generator) + step_NNNN.json (метаданные) + metadata.json
+- `data/diffusers/init_images/` — подготовленные изображения для img2img
+- `data/diffusers/models/` — модели SDXL (чекпоинты)
+- `data/diffusers/previews/` — промежуточные превью: sdxl_{seed}_step{step:04d}.png
+- `data/image_prep/presets/` — зарезервировано для визуального редактора
+- `data/shared/config/local_config.json` — JSON-конфиг приложения (через utils/config.py)
+- `data/shared/registry/` — model_sources.json, models_registry.json
+- `data/shared/logs/` — логи: diffusers_*.log, ollama_*.log, updater.log
+- `data/shared/pids/` — PID-файлы: ollama.pid, diffusers.pid
 
 ### Сеть
 - Все запросы к Ollama API идут через core/ollama_client.py (QThread)
@@ -127,10 +130,12 @@
 - Retry: нет (ошибки пробрасываются в UI)
 
 ### Конфигурация
-- Все изменения в настройках проходят через utils/config.py (QSettings)
-- Миграция из старой версии: QSettings("OllamaChat", "OllamaChat") → QSettings("LocalAILite", "LocalAILite")
-- Пути: venv, модели, output, Ollama URL — валидируются через core/path_validator.py
+- JSON-конфиг: data/shared/config/local_config.json (через utils/config.py)
+- QSettings: для путей (venv, модели, output, Ollama URL) через core/paths_manager.py
+- Структура data/: иерархическая по компонентам (ollama/, diffusers/, image_prep/, shared/) — миграция v1.5.0
+- Пути: валидируются через core/path_validator.py с уровнями (0/1/2)
 - Ресурсы: max_ram_percent, cpu_cores, cpu_priority — применяются через core/resource_monitor.py
+- Миграция из старой версии: QSettings("OllamaChat", "OllamaChat") → QSettings("LocalAILite", "LocalAILite")
 
 ### Сигналы
 - prompt_submitted(str) → MainWindow.on_prompt_submitted → активный таб.handle_prompt()
