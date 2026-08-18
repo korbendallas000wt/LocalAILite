@@ -47,7 +47,7 @@
     │
     ├── ui/                                  # PyQt6 интерфейс
     │   ├── main_window.py                   # Главное окно: 3 вкладки, меню, OllamaManager, SharedBottomBar
-    │   ├── chat_widget.py                   # QTextBrowser + стриминг токенов + копирование кода
+    │   ├── chat_widget.py                   # Append-only просмотрщик готовых HTML-блоков + копирование кода
     │   ├── cleanup_dialog.py                # Диалог освобождения ресурсов при закрытии (5 шагов)
     │   ├── settings_panel.py                # Правая панель Ollama (модель, temperature, timeout)
     │   ├── shared_bottom_bar.py             # Общая нижняя панель: промпт, прогресс, таймер, RAM/CPU, кнопка
@@ -252,7 +252,7 @@ https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/s
 
 ## Потоки данных
 
-    Чат с Ollama: SharedBottomBar -> MainWindow.on_prompt_submitted -> OllamaTab.handle_prompt -> OllamaClient (QThread) -> ChatWidget.append_token
+    Чат с Ollama: SharedBottomBar -> MainWindow.on_prompt_submitted -> OllamaTab.handle_prompt -> OllamaClient (QThread) -> буфер в OllamaTab -> live-строка в статусбар (серым) -> готовый HTML в ChatWidget.append_assistant_message (append-only)
     Генерация SDXL: SharedBottomBar -> DiffusersTab.handle_prompt -> DiffusersWorker (QProcess) -> scripts/generate_diffusers.py -> callback_on_step_end -> history_manager
     Старт Ollama: MainWindow.init -> OllamaManager.start -> проверка порта -> QProcess("ollama serve") с LD_LIBRARY_PATH
     Закрытие: MainWindow.closeEvent -> CleanupDialog -> CleanupThread: стоп Diffusers -> выгрузка Ollama -> стоп сервера -> gc.collect()
