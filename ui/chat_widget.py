@@ -1,76 +1,93 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTextBrowser, QApplication, QMenu)
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QTextCursor
+import base64
 from core.markdown_parser import MarkdownParser
 
+
 class ChatWidget(QWidget):
+    """Append-only просмотрщик готовых сообщений.
+
+    Никакого стриминга и перерисовок во время генерации: каждое сообщение
+    добавляется один раз как готовый HTML-блок. Окно свободно для прокрутки,
+    копирования и прочих действий пользователя в любой момент.
+    """
+
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Единый QTextBrowser для всей истории + стриминга
+
         self.chat_browser = QTextBrowser()
         self.chat_browser.anchorClicked.connect(self._on_anchor_clicked)
-        self._message_responses = []  # Храним тексты ответов для копирования
         self.chat_browser.setOpenExternalLinks(True)
         self.chat_browser.setReadOnly(True)
         self.chat_browser.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.chat_browser.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self.chat_browser, 1)
-        
-        # Парсер и буферы
+
         self.parser = MarkdownParser()
-        self._history_html = []          # Список отрендеренных сообщений [(role, html), ...]
-        self._current_buffer = ""        # Буфер текущего ответа (plain markdown)
-        self._current_role = None        # "user" или "assistant"
-        self._update_timer = QTimer()
-        self._update_timer.setSingleShot(True)
-        self._update_timer.timeout.connect(self._render_current)
-    
+        self._history_html = []        # [(role, html), ...] — готовые блоки
+        self._message_responses = []   # сырые тексты ответов для копирования
+
+    # ─── Публичное API (append-only) ─────────────────────────────
+
     def append_user_message(self, text):
-        """Добавляет сообщение пользователя в историю"""
+        """Добавляет сообщение пользователя (рендер один раз)."""
         html = self.parser.render_user_message(text)
         self._history_html.append(("user", html))
-        self._rerender_all()
-    
-    def start_assistant_message(self):
-        """Начинает стриминг нового ответа"""
-        self._current_buffer = ""
-        self._current_role = "assistant"
-    
-    def append_token(self, token):
-        """Добавляет токен в буфер текущего ответа"""
-        self._current_buffer += token
-        if not self._update_timer.isActive():
-            self._update_timer.start(200)
-    
-    def _render_current(self):
-        """Рендерит текущий буфер и обновляет браузер"""
-        if not self._current_buffer:
+        self._rerender()
+
+    def append_assistant_message(self, markdown_text, stats_dict=None):
+        """Добавляет готовый ответ ассистента (рендер один раз).
+
+        markdown_text: сырой markdown ответа
+        stats_dict:    статистика генерации (опционально)
+        """
+        if not markdown_text:
             return
-        current_html = self.parser.render_assistant_message(self._current_buffer)
-        self._rerender_all(current_html_override=current_html)
-    
-    def finalize_response(self, stats_dict):
-        self._update_timer.stop()
         msg_index = len(self._message_responses)
-        self._message_responses.append(self._current_buffer)
-        
-        html = self.parser.render_assistant_message(self._current_buffer, msg_index)
+        self._message_responses.append(markdown_text)
+
+        html = self.parser.render_assistant_message(markdown_text, msg_index)
         if stats_dict and (stats_dict.get('completion_tokens', 0) > 0
                            or stats_dict.get('duration_sec', 0) > 0):
-            html += self.parser.render_stats(stats_dict, self._current_buffer, msg_index)
-        
+            html += self.parser.render_stats(stats_dict, markdown_text, msg_index)
+
         self._history_html.append(("assistant", html))
-        self._current_buffer = ""
-        self._current_role = None
-        self._rerender_all()
-    
+        self._rerender()
+
+    def clear_chat(self):
+        """Очистка чата."""
+        self.chat_browser.clear()
+        self._history_html = []
+        self._message_responses = []
+
+    # ─── Внутренние методы ───────────────────────────────────────
+
+    def _rerender(self):
+        """Перерисовывает чат. Вызывается только при добавлении сообщения."""
+        sb = self.chat_browser.verticalScrollBar()
+        # Пользователь у нижнего края? Тогда автоскроллим, иначе не дёргаем.
+        was_at_bottom = sb.value() >= sb.maximum() - 30
+
+        parts = [html for _role, html in self._history_html]
+        full_html = self.parser.wrap_document('\n'.join(parts))
+        self.chat_browser.setHtml(full_html)
+
+        if was_at_bottom:
+            # Отложенный скролл: Qt должен успеть сделать layout,
+            # чтобы maximum() был актуален для нового документа.
+            QTimer.singleShot(0, self._scroll_to_bottom)
+
+    def _scroll_to_bottom(self):
+        """Скроллит чат в самый низ."""
+        sb = self.chat_browser.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
     def _on_anchor_clicked(self, url):
-        """Обработка клика по якорю (копирование)"""
+        """Обработка клика по якорю (копирование)."""
         anchor = url.toString()
-        
+
         # Копирование ответа по индексу
         if anchor.startswith('#copy:'):
             try:
@@ -79,48 +96,27 @@ class ChatWidget(QWidget):
                     QApplication.clipboard().setText(self._message_responses[msg_index])
             except (ValueError, IndexError):
                 pass
-        
+
         # Копирование блока кода (текст в base64)
         elif anchor.startswith('#copycode:'):
             try:
                 encoded = anchor.split(':', 1)[1]
-                import base64
                 code_text = base64.b64decode(encoded).decode('utf-8')
                 QApplication.clipboard().setText(code_text)
             except Exception:
                 pass
-    
-    def _rerender_all(self, current_html_override=None):
-        """Перерисовывает весь чат: история + текущий ответ"""
-        parts = []
-        for role, html in self._history_html:
-            parts.append(html)
-        
-        if current_html_override:
-            parts.append(current_html_override)
-        elif self._current_buffer:
-            parts.append(self.parser.render_assistant_message(self._current_buffer))
-        
-        full_html = self.parser.wrap_document('\n'.join(parts))
-        self.chat_browser.setHtml(full_html)
-        
-        # Скролл вниз
-        sb = self.chat_browser.verticalScrollBar()
-        sb.setValue(sb.maximum())
-    
+
     def _show_context_menu(self, pos):
-        """Контекстное меню с копированием кода"""
+        """Контекстное меню с копированием кода."""
         menu = QMenu(self)
         cursor = self.chat_browser.cursorForPosition(pos)
-        
-        # Проверяем, находится ли курсор в блоке кода
         code_text = self.parser.get_code_at_cursor(cursor)
-        
+
         if code_text is not None:
             copy_code = menu.addAction("Копировать код")
             menu.addSeparator()
             copy_all = menu.addAction("Копировать всё")
-            
+
             action = menu.exec(self.chat_browser.mapToGlobal(pos))
             if action == copy_code:
                 QApplication.clipboard().setText(code_text)
@@ -137,11 +133,3 @@ class ChatWidget(QWidget):
                 self.chat_browser.textCursor().clearSelection()
             ))
             menu.exec(self.chat_browser.mapToGlobal(pos))
-    
-    def clear_chat(self):
-        self.chat_browser.clear()
-        self._history_html = []
-        self._current_buffer = ""
-        self._current_role = None
-        self._message_responses = []
-        self._update_timer.stop()
