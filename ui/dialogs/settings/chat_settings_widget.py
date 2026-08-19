@@ -3,9 +3,7 @@ from PyQt6.QtCore import pyqtSignal
 
 
 class ChatSettingsWidget(QWidget):
-    """Вкладка настроек чата (Ollama)"""
-    
-    all_valid = pyqtSignal()  # Для совместимости с settings_dialog
+    all_valid = pyqtSignal()
     
     def __init__(self, config, parent=None):
         super().__init__(parent)
@@ -22,7 +20,14 @@ class ChatSettingsWidget(QWidget):
         self.txt_check.setChecked(self.config.get("chat_save_txt", True))
         layout.addWidget(self.txt_check)
         
-        # Путь к папке чатов
+        layout.addSpacing(10)
+        
+        self.auto_scroll_check = QCheckBox("Автопрокрутка к новому сообщению")
+        self.auto_scroll_check.setChecked(self.config.get("chat_auto_scroll", True))
+        layout.addWidget(self.auto_scroll_check)
+        
+        layout.addSpacing(10)
+        
         path_layout = QHBoxLayout()
         path_layout.addWidget(QLabel("Папка:"))
         self.chats_dir_edit = QLineEdit()
@@ -46,4 +51,5 @@ class ChatSettingsWidget(QWidget):
     def save_settings(self):
         self.config.set("chat_save_json", self.json_check.isChecked())
         self.config.set("chat_save_txt", self.txt_check.isChecked())
+        self.config.set("chat_auto_scroll", self.auto_scroll_check.isChecked())
         self.config.set("chats_dir", self.chats_dir_edit.text())

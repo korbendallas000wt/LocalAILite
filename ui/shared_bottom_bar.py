@@ -1,6 +1,20 @@
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QTextEdit,
                               QPushButton, QProgressBar, QLabel, QGroupBox)
 from PyQt6.QtCore import pyqtSignal, Qt, QTimer
+from PyQt6.QtGui import QTextCursor
+
+
+class PlainTextEdit(QTextEdit):
+    """QTextEdit, который всегда вставляет plain text (без форматирования)"""
+
+    def insertFromMimeData(self, source):
+        """Переопределяем вставку: берём только текст, без форматирования"""
+        if source.hasText():
+            # Вставляем как plain text, сохраняя курсор
+            cursor = self.textCursor()
+            cursor.insertText(source.text())
+        else:
+            super().insertFromMimeData(source)
 
 
 class SharedBottomBar(QWidget):
@@ -32,8 +46,8 @@ class SharedBottomBar(QWidget):
         self.progress_bar.setFormat("%v/%m")
         left_layout.addWidget(self.progress_bar)
 
-        # Поле промпта
-        self.prompt_edit = QTextEdit()
+        # Поле промпта (Plain text only)
+        self.prompt_edit = PlainTextEdit()
         self.prompt_edit.setPlaceholderText(
             "Введите промпт... (Enter - запустить, Shift+Enter - новая строка)"
         )
@@ -115,15 +129,7 @@ class SharedBottomBar(QWidget):
         self.timer_label.setText(f"⏱ {mins:02d}:{secs:02d}")
 
     def set_mode(self, mode: str, model_name: str = ""):
-        """Устанавливает индикатор режима с именем модели.
-        mode: "free" | "ollama" | "diffusers"
-        model_name: имя модели, которая сейчас генерирует (пусто = не показывать)
-        
-        Примеры вывода:
-          ㊘ Ресурсы свободны
-          ㊘ Генерация Ollama · qwen2.5:3b
-          ㊘ Генерация Diffusers · SDXL Base 1.0
-        """
+        """Устанавливает индикатор режима с именем модели."""
         if mode == "free":
             self.mode_label.setText("㊘ Ресурсы свободны")
             self.mode_label.setStyleSheet("font-size: 12px; color: green; font-weight: bold;")

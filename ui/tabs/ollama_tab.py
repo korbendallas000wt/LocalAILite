@@ -10,8 +10,6 @@ import requests
 
 
 class OllamaTab(QWidget):
-    """Вкладка Ollama с состоянием для SharedBottomBar"""
-
     state_changed = pyqtSignal(dict)
 
     def __init__(self, config, resource_manager):
@@ -42,14 +40,13 @@ class OllamaTab(QWidget):
 
         layout = QHBoxLayout(self)
 
-        # Левая часть: чат + панель управления
         left_layout = QVBoxLayout()
         self.chat_widget = ChatWidget()
+        self.chat_widget.set_auto_scroll(self.config.get("chat_auto_scroll", True))
         self.chat_control_panel = ChatControlPanel()
         left_layout.addWidget(self.chat_widget, 1)
         left_layout.addWidget(self.chat_control_panel)
 
-        # Правая часть: настройки
         self.settings_panel = SettingsPanel(self.config)
 
         timeout_sec = self.settings_panel.timeout_spin.value()
@@ -58,7 +55,6 @@ class OllamaTab(QWidget):
         layout.addLayout(left_layout, 3)
         layout.addWidget(self.settings_panel, 1)
 
-        # Подключение сигналов
         self.settings_panel.clear_btn.clicked.connect(self.clear_chat)
         self.settings_panel.timeout_spin.valueChanged.connect(self._on_timeout_changed)
         
@@ -87,11 +83,9 @@ class OllamaTab(QWidget):
         self.state_changed.emit(self._bar_state.copy())
 
     def _update_undo_button_state(self):
-        """Обновляет состояние кнопки 'Отменить'"""
         msgs = self.chat_manager.messages
-        can_undo = (len(msgs) >= 2 and 
-                    msgs[-1]["role"] == "assistant" and 
-                    msgs[-2]["role"] == "user")
+        # Активна, если идет генерация ИЛИ если есть хотя бы одно сообщение в истории
+        can_undo = self._bar_state.get("is_running", False) or len(msgs) > 0
         self.chat_control_panel.set_undo_enabled(can_undo)
 
     def handle_prompt(self, text):
@@ -156,7 +150,7 @@ class OllamaTab(QWidget):
         if now - self._last_status_update >= 0.1:
             self._last_status_update = now
             last_line = self._current_response_text.split('\n')[-1]
-            display = last_line if len(last_line) <= 80 else last_line[:77] + "..."
+            display = last_line if len(last_line) <= 100 else last_line[:97] + "..."
             self._set_status(display, "gray")
 
     def _update_progress(self):
@@ -226,12 +220,18 @@ class OllamaTab(QWidget):
         self._set_status("Чат очищен", "green")
 
     def undo_last_message(self):
-        last_user_text = self.chat_manager.remove_last_pair()
+        # Если идет генерация, останавливаем её
+        if self._bar_state.get("is_running", False):
+            self.stop_generation()
+            self._current_response_text = ""
+            self._had_error = False
+        
+        last_user_text = self.chat_manager.remove_last_message()
         if last_user_text:
-            self.chat_widget.remove_last_pair()
+            self.chat_widget.remove_last_message()
             self.update_bar_state("prompt", last_user_text)
             self._update_undo_button_state()
-            self._set_status("Последний вопрос возвращён в промпт", "#DAA520")
+            self._set_status("Действие отменено, текст возвращён в промпт", "#DAA520")
 
     def _on_attach_file(self):
         self._set_status("📎 Загрузка файлов пока в разработке", "#DAA520")

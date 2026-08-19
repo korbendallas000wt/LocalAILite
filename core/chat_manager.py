@@ -12,7 +12,6 @@ class ChatManager:
         return self.messages.copy()
 
     def get_full_history_markdown(self):
-        """Возвращает всю историю в формате markdown"""
         md_parts = []
         for msg in self.messages:
             if msg["role"] == "user":
@@ -24,11 +23,18 @@ class ChatManager:
     def clear(self):
         self.messages = []
 
-    def remove_last_pair(self):
-        """Удаляет последнюю пару сообщений (user + assistant) и возвращает текст пользователя."""
-        if len(self.messages) >= 2:
-            if self.messages[-1]["role"] == "assistant" and self.messages[-2]["role"] == "user":
-                last_user_msg = self.messages.pop(-2)
-                self.messages.pop()  # удаляем assistant
-                return last_user_msg["content"]
+    def remove_last_message(self):
+        """Удаляет последнее сообщение (или пару) и возвращает текст пользователя."""
+        if not self.messages:
+            return None
+        
+        last_msg = self.messages.pop()
+        if last_msg["role"] == "user":
+            return last_msg["content"]
+        
+        # Если это ассистент, удаляем и его, и предшествующий пользовательский
+        if last_msg["role"] == "assistant" and len(self.messages) >= 1 and self.messages[-1]["role"] == "user":
+            user_msg = self.messages.pop()
+            return user_msg["content"]
+            
         return None
