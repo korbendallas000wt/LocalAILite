@@ -22,6 +22,11 @@ if __name__ == "__main__":
     validator = PathValidator()
     result = validator.validate_installed(config)
     
+    # Создаём папку для чатов (если её нет)
+    import os
+    chats_dir = config.get_chats_dir()
+    os.makedirs(chats_dir, exist_ok=True)
+
     window = MainWindow()
     
     # Если пути не настроены, показываем диалог настроек

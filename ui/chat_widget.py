@@ -133,3 +133,13 @@ class ChatWidget(QWidget):
                 self.chat_browser.textCursor().clearSelection()
             ))
             menu.exec(self.chat_browser.mapToGlobal(pos))
+
+    def remove_last_pair(self):
+        """Удаляет последний блок пользователя и ассистента из истории."""
+        if len(self._history_html) >= 2:
+            if self._history_html[-1][0] == "assistant" and self._history_html[-2][0] == "user":
+                self._history_html.pop()
+                self._history_html.pop()
+                if self._message_responses:
+                    self._message_responses.pop()
+                self._rerender()

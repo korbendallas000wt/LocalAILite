@@ -1,10 +1,10 @@
-from PyQt6.QtWidgets import QWidget, QHBoxLayout
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout
 from ui.chat_widget import ChatWidget
+from ui.chat_control_panel import ChatControlPanel
 from ui.settings_panel import SettingsPanel
 from core.chat_manager import ChatManager
 from core.ollama_client import OllamaClient
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import pyqtSignal, QTimer
 import time
 import requests
 
@@ -12,7 +12,6 @@ import requests
 class OllamaTab(QWidget):
     """Вкладка Ollama с состоянием для SharedBottomBar"""
 
-    # Универсальный сигнал для MainWindow
     state_changed = pyqtSignal(dict)
 
     def __init__(self, config, resource_manager):
@@ -23,15 +22,14 @@ class OllamaTab(QWidget):
         self.client = None
         self._current_response_text = ""
         self.last_stats = None
-        self._had_error = False          # была ли ошибка в текущей генерации
-        self._last_status_update = 0.0   # для троттлинга live-строки
+        self._had_error = False
+        self._last_status_update = 0.0
 
-        # Таймер для прогресс-бара (привязан к таймауту)
         self._progress_timer = QTimer()
         self._progress_timer.setInterval(1000)
         self._progress_timer.timeout.connect(self._update_progress)
         self._generation_start_time = None
-        # Состояние для SharedBottomBar
+        
         self._bar_state = {
             "prompt": "",
             "progress_current": 0,
@@ -44,48 +42,62 @@ class OllamaTab(QWidget):
 
         layout = QHBoxLayout(self)
 
+        # Левая часть: чат + панель управления
+        left_layout = QVBoxLayout()
         self.chat_widget = ChatWidget()
+        self.chat_control_panel = ChatControlPanel()
+        left_layout.addWidget(self.chat_widget, 1)
+        left_layout.addWidget(self.chat_control_panel)
+
+        # Правая часть: настройки
         self.settings_panel = SettingsPanel(self.config)
 
-        # Инициализируем прогресс-бар под таймаут
         timeout_sec = self.settings_panel.timeout_spin.value()
         self._bar_state["progress_total"] = timeout_sec
 
-        layout.addWidget(self.chat_widget, 3)
+        layout.addLayout(left_layout, 3)
         layout.addWidget(self.settings_panel, 1)
 
+        # Подключение сигналов
         self.settings_panel.clear_btn.clicked.connect(self.clear_chat)
         self.settings_panel.timeout_spin.valueChanged.connect(self._on_timeout_changed)
+        
+        self.chat_control_panel.new_chat_clicked.connect(self.clear_chat)
+        self.chat_control_panel.undo_last_clicked.connect(self.undo_last_message)
+        self.chat_control_panel.attach_file_clicked.connect(self._on_attach_file)
+        self.chat_control_panel.export_chat_clicked.connect(self._on_export_chat)
 
     def _on_timeout_changed(self, value):
         self.state_changed.emit(self._bar_state.copy())
 
     def get_bar_state(self) -> dict:
-        """Возвращает копию состояния"""
         return self._bar_state.copy()
 
     def set_bar_state(self, state: dict):
-        """Устанавливает состояние"""
         self._bar_state.update(state)
         self.state_changed.emit(self._bar_state.copy())
 
     def update_bar_state(self, key: str, value):
-        """Обновляет одно поле и эмитит сигнал"""
         self._bar_state[key] = value
         self.state_changed.emit(self._bar_state.copy())
 
     def _set_status(self, message: str, color: str = "#DAA520"):
-        """Устанавливает статус с цветом"""
         self._bar_state["status"] = message
         self._bar_state["status_color"] = color
         self.state_changed.emit(self._bar_state.copy())
 
+    def _update_undo_button_state(self):
+        """Обновляет состояние кнопки 'Отменить'"""
+        msgs = self.chat_manager.messages
+        can_undo = (len(msgs) >= 2 and 
+                    msgs[-1]["role"] == "assistant" and 
+                    msgs[-2]["role"] == "user")
+        self.chat_control_panel.set_undo_enabled(can_undo)
+
     def handle_prompt(self, text):
-        """Обработка промпта из общей панели"""
         if not text:
             return
 
-        # Обновляем состояние
         self.update_bar_state("prompt", text)
         if not self.resource_manager.acquire_resource("ollama"):
             self._set_status("⚠ Ресурс занят другой моделью", "orange")
@@ -93,7 +105,6 @@ class OllamaTab(QWidget):
             return
         self.update_bar_state("is_running", True)
 
-        # Настраиваем прогресс-бар под таймаут
         timeout_sec = self.settings_panel.timeout_spin.value()
         self.update_bar_state("progress_total", timeout_sec)
         self.update_bar_state("progress_current", 0)
@@ -108,6 +119,7 @@ class OllamaTab(QWidget):
         self.last_stats = None
         self._had_error = False
         self._last_status_update = 0.0
+        self._update_undo_button_state()
 
         sys_prompt = self.settings_panel.sys_prompt.toPlainText()
         messages = []
@@ -136,15 +148,10 @@ class OllamaTab(QWidget):
         self.client.stats_received.connect(self.on_stats)
 
         self.client.start()
-
-        # Чат-поведение: очищаем поле промпта после отправки
         self.update_bar_state("prompt", "")
 
     def on_token(self, token):
-        """Получен токен — накопление буфера + live-строка в статусбар."""
         self._current_response_text += token
-
-        # Троттлинг: обновляем статус не чаще чем раз в 100 мс
         now = time.time()
         if now - self._last_status_update >= 0.1:
             self._last_status_update = now
@@ -153,15 +160,12 @@ class OllamaTab(QWidget):
             self._set_status(display, "gray")
 
     def _update_progress(self):
-        """Обновляет прогресс-бар и таймер каждую секунду"""
         if self._generation_start_time:
             elapsed = int(time.time() - self._generation_start_time)
             self.update_bar_state("progress_current", elapsed)
             self.update_bar_state("elapsed_seconds", elapsed)
 
     def on_finished(self):
-        """Генерация завершена — кладём готовый ответ в чат (append-only)."""
-        # Останавливаем таймер и сбрасываем прогресс
         self._progress_timer.stop()
         self._generation_start_time = None
         self.update_bar_state("progress_current", 0)
@@ -171,28 +175,23 @@ class OllamaTab(QWidget):
         self.chat_manager.add_assistant_message(self._current_response_text)
         self.settings_panel.save_settings()
 
-        # Готовый ответ — один раз в чат
         self.chat_widget.append_assistant_message(self._current_response_text, self.last_stats)
+        self._update_undo_button_state()
 
-        # Обновляем состояние
         self.resource_manager.release_resource()
         self.update_bar_state("is_running", False)
         if not self._had_error:
             self._set_status("Готово", "green")
 
-        # Сбрасываем кнопку в ready
         from ui.main_window import MainWindow
         main_window = self.window()
         if isinstance(main_window, MainWindow):
             main_window.shared_bar.reset_action_state()
 
     def on_stats(self, stats_dict):
-        """Получена статистика"""
         self.last_stats = stats_dict
 
     def on_error(self, error_msg):
-        """Ошибка генерации — пометка попадёт в финальное сообщение."""
-        # Останавливаем таймер и сбрасываем прогресс
         self._progress_timer.stop()
         self._generation_start_time = None
         self.update_bar_state("progress_current", 0)
@@ -200,40 +199,47 @@ class OllamaTab(QWidget):
         self.update_bar_state("progress_total", timeout_sec)
 
         self._had_error = True
-        # Пометка об ошибке добавится к буферу и попадёт в чат через on_finished
         self._current_response_text += f"\n\n⚠ Ошибка: {error_msg}"
 
-        # Обновляем состояние (ресурс освободится в on_finished)
         self.update_bar_state("is_running", False)
         self._set_status(f"Ошибка: {error_msg}", "red")
 
-        # Сбрасываем кнопку в ready
         from ui.main_window import MainWindow
         main_window = self.window()
         if isinstance(main_window, MainWindow):
             main_window.shared_bar.reset_action_state()
 
     def stop_generation(self):
-        """Остановка генерации"""
-        # Останавливаем таймер прогресса
         self._progress_timer.stop()
-
-        # Переключаем кнопку в состояние "Завершение..."
         from ui.main_window import MainWindow
         main_window = self.window()
         if isinstance(main_window, MainWindow):
             main_window.shared_bar.set_stopping_state()
-
         if self.client and self.client.isRunning():
             self.client.stop()
 
     def clear_chat(self):
-        """Очистка чата"""
         self.chat_manager.clear()
         self.chat_widget.clear_chat()
+        self._update_undo_button_state()
+        self.update_bar_state("prompt", "")
+        self._set_status("Чат очищен", "green")
+
+    def undo_last_message(self):
+        last_user_text = self.chat_manager.remove_last_pair()
+        if last_user_text:
+            self.chat_widget.remove_last_pair()
+            self.update_bar_state("prompt", last_user_text)
+            self._update_undo_button_state()
+            self._set_status("Последний вопрос возвращён в промпт", "#DAA520")
+
+    def _on_attach_file(self):
+        self._set_status("📎 Загрузка файлов пока в разработке", "#DAA520")
+
+    def _on_export_chat(self):
+        self._set_status("💾 Сохранение чата пока в разработке", "#DAA520")
 
     def unload(self):
-        """Выгружает модель из памяти Ollama"""
         try:
             requests.post(f"{self.config.get_ollama_url()}/api/generate",
                          json={"model": self.settings_panel.model_combo.currentText(),

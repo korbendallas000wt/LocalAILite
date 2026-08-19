@@ -23,3 +23,12 @@ class ChatManager:
 
     def clear(self):
         self.messages = []
+
+    def remove_last_pair(self):
+        """Удаляет последнюю пару сообщений (user + assistant) и возвращает текст пользователя."""
+        if len(self.messages) >= 2:
+            if self.messages[-1]["role"] == "assistant" and self.messages[-2]["role"] == "user":
+                last_user_msg = self.messages.pop(-2)
+                self.messages.pop()  # удаляем assistant
+                return last_user_msg["content"]
+        return None

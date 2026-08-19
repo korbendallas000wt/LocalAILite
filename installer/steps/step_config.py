@@ -25,7 +25,8 @@ class StepConfig(InstallStep):
 
     # Относительные подпапки внутри data/
     SUBDIRS = [
-        "ollama/models",           # Модели Ollama (blobs/manifests)
+        "ollama/models",
+        "ollama/chats",            # Сохранённые чаты (JSON/TXT)
         "diffusers/history",       # История генерации: {timestamp}/step_NNNN.{pt,json}
         "diffusers/init_images",   # Подготовленные изображения для img2img
         "diffusers/models",        # Модели SDXL (чекпоинты)

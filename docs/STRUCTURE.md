@@ -48,6 +48,7 @@
     ├── ui/                                  # PyQt6 интерфейс
     │   ├── main_window.py                   # Главное окно: 3 вкладки, меню, OllamaManager, SharedBottomBar
     │   ├── chat_widget.py                   # Append-only просмотрщик готовых HTML-блоков + копирование кода
+    │   ├── chat_control_panel.py            # Панель управления чатом (4 кнопки: Новый, Отменить, Файл, Сохранить)
     │   ├── cleanup_dialog.py                # Диалог освобождения ресурсов при закрытии (5 шагов)
     │   ├── settings_panel.py                # Правая панель Ollama (модель, temperature, timeout)
     │   ├── shared_bottom_bar.py             # Общая нижняя панель: промпт, прогресс, таймер, RAM/CPU, кнопка
@@ -58,6 +59,7 @@
     │   │   └── settings/
     │   │       ├── settings_dialog.py       # Окно настроек (вкладки)
     │   │       ├── paths_settings_widget.py         # Вкладка Общие
+    │   │       ├── chat_settings_widget.py          # Вкладка Чат (формат сохранения, папка)
     │   │       ├── diffusers_settings_widget.py     # Вкладка Diffusers
     │   │       ├── resources_settings_widget.py     # Вкладка Ресурсы
  │   │       └── update_settings_widget.py        # Вкладка Обновления (v2.0)
@@ -93,6 +95,7 @@
     └── data/                                # Рабочие данные (в gitignore)
         ├── ollama/
         │   └── models/                 # Модели Ollama (blobs/manifests)
+        │       └── chats/                  # Сохранённые чаты (JSON/TXT)
         ├── diffusers/
         │   ├── history/                # История генерации (timestamp/step_NNNN.{pt,json})
         │   ├── init_images/            # Подготовленные изображения

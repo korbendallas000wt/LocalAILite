@@ -4,6 +4,7 @@ from ui.dialogs.settings.paths_settings_widget import PathsSettingsWidget
 from ui.dialogs.settings.diffusers_settings_widget import DiffusersSettingsWidget
 from ui.dialogs.settings.resources_settings_widget import ResourcesSettingsWidget
 from ui.dialogs.settings.update_settings_widget import UpdateSettingsWidget
+from ui.dialogs.settings.chat_settings_widget import ChatSettingsWidget
 
 class SettingsDialog(QDialog):
     """Главный диалог настроек приложения"""
@@ -22,9 +23,11 @@ class SettingsDialog(QDialog):
         # Вкладка Общие (пути)
         self.paths_widget = PathsSettingsWidget(config)
         self.tabs.addTab(self.paths_widget, "📁 Общие")
-        
-        # Подключаем сигнал all_valid для автозакрытия
         self.paths_widget.all_valid.connect(self._on_all_valid)
+
+        # Вкладка Чат (Ollama)
+        self.chat_widget = ChatSettingsWidget(config)
+        self.tabs.addTab(self.chat_widget, "💬 Чат")
 
         # Вкладка Diffusers (только если features/sdxl)
         self.diffusers_widget = None
@@ -54,13 +57,11 @@ class SettingsDialog(QDialog):
         self._auto_close_timer = None
 
     def closeEvent(self, event):
-        """Останавливаем потоки обновлений перед закрытием."""
         if hasattr(self, 'update_widget') and self.update_widget:
             self.update_widget.updater.shutdown()
         super().closeEvent(event)
 
     def _on_all_valid(self):
-        """Все поля валидны — автозакрытие через 1 сек"""
         if self._auto_close_timer:
             self._auto_close_timer.stop()
         self._auto_close_timer = QTimer()
@@ -69,12 +70,9 @@ class SettingsDialog(QDialog):
         self._auto_close_timer.start(1000)
 
     def _auto_accept(self):
-        """Автоматическое закрытие диалога"""
         self._on_accept()
 
     def _on_accept(self):
-        """Сохраняет все настройки и закрывает диалог"""
-        # Проверяем, есть ли проблемы (только для установленных компонентов)
         from core.path_validator import PathValidator
         validator = PathValidator()
         all_valid = True
@@ -90,13 +88,11 @@ class SettingsDialog(QDialog):
             ollama_valid = validator.validate_ollama_url(self.paths_widget.ollama_edit.text())["valid"]
             if not ollama_valid:
                 all_valid = False
-            # Бинарник Ollama критичен (без него не запустится)
             ollama_bin_valid = validator.validate_ollama_binary(self.paths_widget.ollama_bin_edit.text())["valid"]
             if not ollama_bin_valid:
                 all_valid = False
         
         if not all_valid:
-            # Есть проблемы — показываем предупреждение
             QMessageBox.warning(
                 self,
                 "Настройка путей",
@@ -104,8 +100,9 @@ class SettingsDialog(QDialog):
                 "Некоторые функции будут недоступны..."
             )
         
-        # Сохраняем настройки
+        # Сохраняем настройки всех вкладок
         self.paths_widget.save_settings()
+        self.chat_widget.save_settings()
         if self.diffusers_widget:
             self.diffusers_widget.save_settings()
         self.resources_widget.save_settings()
