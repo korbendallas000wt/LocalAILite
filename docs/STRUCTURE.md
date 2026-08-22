@@ -95,8 +95,8 @@
     │
     └── data/                                # Рабочие данные (в gitignore)
         ├── ollama/
-        │   └── models/                 # Модели Ollama (blobs/manifests)
-        │       └── chats/                  # Сохранённые чаты (JSON/TXT)
+        │   ├── models/                 # Модели Ollama (blobs/manifests)
+        │   └── chats/                  # Сохранённые чаты (JSON/TXT)
         ├── diffusers/
         │   ├── history/                # История генерации (timestamp/step_NNNN.{pt,json})
         │   ├── init_images/            # Подготовленные изображения
