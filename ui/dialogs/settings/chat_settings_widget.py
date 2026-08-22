@@ -26,6 +26,10 @@ class ChatSettingsWidget(QWidget):
         self.auto_scroll_check.setChecked(self.config.get("chat_auto_scroll", True))
         layout.addWidget(self.auto_scroll_check)
         
+        self.auto_title_check = QCheckBox("Автоназвание через LLM (3 слова)")
+        self.auto_title_check.setChecked(self.config.get("chat_auto_title", True))
+        layout.addWidget(self.auto_title_check)
+        
         layout.addSpacing(10)
         
         path_layout = QHBoxLayout()
@@ -52,4 +56,5 @@ class ChatSettingsWidget(QWidget):
         self.config.set("chat_save_json", self.json_check.isChecked())
         self.config.set("chat_save_txt", self.txt_check.isChecked())
         self.config.set("chat_auto_scroll", self.auto_scroll_check.isChecked())
+        self.config.set("chat_auto_title", self.auto_title_check.isChecked())
         self.config.set("chats_dir", self.chats_dir_edit.text())

@@ -13,7 +13,7 @@ class ChatWidget(QWidget):
         self.chat_browser.anchorClicked.connect(self._on_anchor_clicked)
         self.chat_browser.setOpenExternalLinks(True)
         self.chat_browser.setReadOnly(True)
-        self.chat_browser.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # Не перехватываем фокус
+        self.chat_browser.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.chat_browser.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.chat_browser.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self.chat_browser, 1)
@@ -49,6 +49,15 @@ class ChatWidget(QWidget):
         self._history_html = []
         self._message_responses = []
 
+    def load_chat(self, messages: list):
+        """Очищает чат и загружает историю из списка сообщений"""
+        self.clear_chat()
+        for msg in messages:
+            if msg["role"] == "user":
+                self.append_user_message(msg["content"])
+            elif msg["role"] == "assistant":
+                self.append_assistant_message(msg["content"], msg.get("stats"))
+
     def remove_last_message(self):
         """Удаляет последний блок (или пару) из истории."""
         if not self._history_html:
@@ -72,7 +81,6 @@ class ChatWidget(QWidget):
         full_html = self.parser.wrap_document('\n'.join(parts))
         self.chat_browser.setHtml(full_html)
 
-        # Прокручиваем, если включена автопрокрутка ИЛИ пользователь уже был внизу
         if self.auto_scroll_enabled or was_at_bottom:
             QTimer.singleShot(0, self._scroll_to_bottom)
 
@@ -83,7 +91,7 @@ class ChatWidget(QWidget):
     def _on_anchor_clicked(self, url):
         anchor = url.toString()
         sb = self.chat_browser.verticalScrollBar()
-        scroll_pos = sb.value()  # Сохраняем позицию ДО клика
+        scroll_pos = sb.value()
 
         if anchor.startswith('#copy:'):
             try:
@@ -100,7 +108,6 @@ class ChatWidget(QWidget):
             except Exception:
                 pass
         
-        # Восстанавливаем позицию ПОСЛЕ клика (отложенно, чтобы Qt успел обработать)
         QTimer.singleShot(0, lambda: sb.setValue(scroll_pos))
 
     def _show_context_menu(self, pos):
@@ -123,7 +130,6 @@ class ChatWidget(QWidget):
             menu.exec(self.chat_browser.mapToGlobal(pos))
 
     def _copy_safe(self, is_code, code_text):
-        """Безопасное копирование без сброса позиции скролла."""
         sb = self.chat_browser.verticalScrollBar()
         scroll_pos = sb.value()
         
@@ -132,5 +138,4 @@ class ChatWidget(QWidget):
         else:
             QApplication.clipboard().setText(self.chat_browser.toPlainText())
             
-        # Восстанавливаем позицию отложенно
         QTimer.singleShot(0, lambda: sb.setValue(scroll_pos))

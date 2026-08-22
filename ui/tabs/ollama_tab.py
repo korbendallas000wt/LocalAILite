@@ -1,12 +1,15 @@
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QInputDialog, QMessageBox
 from ui.chat_widget import ChatWidget
 from ui.chat_control_panel import ChatControlPanel
 from ui.settings_panel import SettingsPanel
 from core.chat_manager import ChatManager
+from core.chat_exporter import ChatExporter
 from core.ollama_client import OllamaClient
 from PyQt6.QtCore import pyqtSignal, QTimer
 import time
 import requests
+import json
+import os
 
 
 class OllamaTab(QWidget):
@@ -22,6 +25,11 @@ class OllamaTab(QWidget):
         self.last_stats = None
         self._had_error = False
         self._last_status_update = 0.0
+        
+        # Состояние таба: свободное или зафиксированное
+        self._chat_locked = False
+        self._current_mode = "new"
+        self._pending_clear_after_save = False  # Флаг для очистки после сохранения
 
         self._progress_timer = QTimer()
         self._progress_timer.setInterval(1000)
@@ -55,10 +63,12 @@ class OllamaTab(QWidget):
         layout.addLayout(left_layout, 3)
         layout.addWidget(self.settings_panel, 1)
 
-        self.settings_panel.clear_btn.clicked.connect(self.clear_chat)
+        # Подключения
         self.settings_panel.timeout_spin.valueChanged.connect(self._on_timeout_changed)
+        self.settings_panel.mode_changed.connect(self._on_mode_changed)
+        self.settings_panel.chat_selected.connect(self._on_chat_selected)
         
-        self.chat_control_panel.new_chat_clicked.connect(self.clear_chat)
+        self.chat_control_panel.new_chat_clicked.connect(self._on_new_chat_clicked)
         self.chat_control_panel.undo_last_clicked.connect(self.undo_last_message)
         self.chat_control_panel.attach_file_clicked.connect(self._on_attach_file)
         self.chat_control_panel.export_chat_clicked.connect(self._on_export_chat)
@@ -84,12 +94,89 @@ class OllamaTab(QWidget):
 
     def _update_undo_button_state(self):
         msgs = self.chat_manager.messages
-        # Активна, если идет генерация ИЛИ если есть хотя бы одно сообщение в истории
         can_undo = self._bar_state.get("is_running", False) or len(msgs) > 0
         self.chat_control_panel.set_undo_enabled(can_undo)
 
+    def _on_mode_changed(self, mode: str):
+        """Обработка смены режима (только в свободном состоянии)"""
+        if self._chat_locked:
+            return
+        
+        self._current_mode = mode
+        self.settings_panel._update_ui_state(mode, locked=False)
+        
+        if mode == "new":
+            self._set_status("Режим: Новый чат", "green")
+        elif mode == "resume":
+            self._set_status("Режим: Выберите чат для продолжения", "#DAA520")
+        elif mode == "edit":
+            self._set_status("Режим: Выберите чат для редактирования", "#DAA520")
+
+    def _on_chat_selected(self, file_path: str):
+        """Загрузка чата из JSON"""
+        if not os.path.exists(file_path):
+            self._set_status("⚠ Файл чата не найден", "red")
+            return
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                chat_data = json.load(f)
+            
+            self.chat_manager.load_messages(chat_data.get("messages", []))
+            self.chat_widget.load_chat(chat_data.get("messages", []))
+            
+            if "settings" in chat_data:
+                self.settings_panel.apply_settings_from_chat(chat_data["settings"])
+            
+            self._chat_locked = True
+            self.settings_panel.set_mode(self._current_mode, locked=True)
+            
+            self._update_undo_button_state()
+            self._set_status(f"💾 Чат загружен: {os.path.basename(file_path)}", "green")
+            
+        except Exception as e:
+            self._set_status(f"❌ Ошибка загрузки чата: {e}", "red")
+
+    def _on_new_chat_clicked(self):
+        """Кнопка '+ Новый чат' с защитным вопросом"""
+        if len(self.chat_manager.messages) > 0:
+            reply = QMessageBox.question(
+                self,
+                "Новый чат",
+                "Текущий чат не сохранён. Сохранить перед очисткой?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                # Устанавливаем флаг очистки после сохранения
+                self._pending_clear_after_save = True
+                self._on_export_chat()
+            elif reply == QMessageBox.StandardButton.No:
+                self._clear_chat_internal()
+            else:
+                return
+        else:
+            self._clear_chat_internal()
+
+    def _clear_chat_internal(self):
+        """Внутренний метод очистки чата"""
+        self.chat_manager.clear()
+        self.chat_widget.clear_chat()
+        self.settings_panel.chat_file_edit.clear()
+        self._chat_locked = False
+        self._current_mode = "new"
+        self.settings_panel.set_mode("new", locked=False)
+        self._update_undo_button_state()
+        self.update_bar_state("prompt", "")
+        self._set_status("Чат очищен", "green")
+
     def handle_prompt(self, text):
         if not text:
+            return
+
+        if self._current_mode in ["resume", "edit"] and not self._chat_locked:
+            self._set_status("⚠ Загрузите чат через 📂", "orange")
             return
 
         self.update_bar_state("prompt", text)
@@ -98,6 +185,10 @@ class OllamaTab(QWidget):
             self.update_bar_state("is_running", False)
             return
         self.update_bar_state("is_running", True)
+
+        if not self._chat_locked:
+            self._chat_locked = True
+            self.settings_panel.set_mode(self._current_mode, locked=True)
 
         timeout_sec = self.settings_panel.timeout_spin.value()
         self.update_bar_state("progress_total", timeout_sec)
@@ -213,14 +304,10 @@ class OllamaTab(QWidget):
             self.client.stop()
 
     def clear_chat(self):
-        self.chat_manager.clear()
-        self.chat_widget.clear_chat()
-        self._update_undo_button_state()
-        self.update_bar_state("prompt", "")
-        self._set_status("Чат очищен", "green")
+        """Публичный метод очистки (используется извне)"""
+        self._clear_chat_internal()
 
     def undo_last_message(self):
-        # Если идет генерация, останавливаем её
         if self._bar_state.get("is_running", False):
             self.stop_generation()
             self._current_response_text = ""
@@ -237,7 +324,108 @@ class OllamaTab(QWidget):
         self._set_status("📎 Загрузка файлов пока в разработке", "#DAA520")
 
     def _on_export_chat(self):
-        self._set_status("💾 Сохранение чата пока в разработке", "#DAA520")
+        if not self.chat_manager.messages:
+            self._set_status("⚠ Нечего сохранять — чат пуст", "orange")
+            return
+        
+        if self.config.get("chat_auto_title", True):
+            self._set_status("🤖 Генерация названия...", "#DAA520")
+            self._generate_title_async()
+        else:
+            self._show_save_dialog("")
+
+    def _generate_title_async(self):
+        context_messages = []
+        for msg in self.chat_manager.messages[:6]:
+            role = "Пользователь" if msg["role"] == "user" else "Ассистент"
+            content = msg["content"][:200]
+            context_messages.append(f"{role}: {content}")
+        
+        prompt = (
+            "Придумай короткий заголовок (максимум 3 слова) для этого диалога. "
+            "Заголовок должен отражать основную тему. "
+            "Отвечай ТОЛЬКО самим заголовком, без кавычек и пояснений.\n\n"
+            + "\n".join(context_messages)
+        )
+
+        self._title_buffer = ""
+        self._title_client = OllamaClient(
+            url=self.config.get("url", "http://localhost:11434"),
+            model=self.settings_panel.model_combo.currentText(),
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": 0.3, "num_predict": 30},
+            timeout=30,
+            stream=False
+        )
+        self._title_client.token_received.connect(self._on_title_token)
+        self._title_client.generation_finished.connect(self._on_title_finished)
+        self._title_client.error_occurred.connect(self._on_title_error)
+        self._title_client.start()
+
+    def _on_title_token(self, token):
+        self._title_buffer += token
+
+    def _on_title_finished(self):
+        title = self._title_buffer.strip().replace('\n', ' ')[:50]
+        title = title.strip('"\'')
+        self._show_save_dialog(title)
+
+    def _on_title_error(self, error_msg):
+        self._set_status(f"⚠ Не удалось сгенерировать название: {error_msg}", "orange")
+        self._show_save_dialog("")
+
+    def _show_save_dialog(self, default_title: str):
+        title, ok = QInputDialog.getText(
+            self, "Сохранить чат", "Название чата:", text=default_title
+        )
+        if ok and title.strip():
+            self._save_chat(title.strip())
+        elif ok:
+            self._set_status("⚠ Сохранение отменено: название не указано", "orange")
+            # Сбрасываем флаг, если пользователь отменил ввод названия
+            self._pending_clear_after_save = False
+
+    def _save_chat(self, title: str):
+        try:
+            settings = {
+                "model": self.settings_panel.model_combo.currentText(),
+                "temperature": self.settings_panel.temp_spin.value(),
+                "top_p": self.settings_panel.top_p_spin.value(),
+                "max_tokens": self.settings_panel.max_tokens_spin.value(),
+                "system_prompt": self.settings_panel.sys_prompt.toPlainText(),
+                "timeout": self.settings_panel.timeout_spin.value(),
+                "stream": self.settings_panel.stream_check.isChecked()
+            }
+            
+            chats_dir = self.config.get_chats_dir()
+            exporter = ChatExporter(chats_dir)
+            
+            result = exporter.export_chat(
+                title=title,
+                messages=self.chat_manager.messages,
+                settings=settings,
+                save_json=self.config.get("chat_save_json", True),
+                save_txt=self.config.get("chat_save_txt", True)
+            )
+            
+            saved_files = []
+            if "json" in result: saved_files.append("JSON")
+            if "txt" in result: saved_files.append("TXT")
+            
+            self._chat_locked = False
+            self.settings_panel.set_mode(self._current_mode, locked=False)
+            
+            self._set_status(f"💾 Чат '{title}' сохранён ({', '.join(saved_files)})", "green")
+            
+            # Проверяем флаг и очищаем чат, если нужно
+            if self._pending_clear_after_save:
+                self._pending_clear_after_save = False
+                self._clear_chat_internal()
+            
+        except Exception as e:
+            self._set_status(f"❌ Ошибка сохранения: {e}", "red")
+            # Сбрасываем флаг при ошибке
+            self._pending_clear_after_save = False
 
     def unload(self):
         try:
