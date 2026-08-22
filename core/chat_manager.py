@@ -5,14 +5,16 @@ class ChatManager:
     def add_user_message(self, content):
         self.messages.append({"role": "user", "content": content})
 
-    def add_assistant_message(self, content):
-        self.messages.append({"role": "assistant", "content": content})
+    def add_assistant_message(self, content, stats=None):
+        msg = {"role": "assistant", "content": content}
+        if stats:
+            msg["stats"] = stats
+        self.messages.append(msg)
 
     def get_messages(self):
         return self.messages.copy()
 
     def get_full_history_markdown(self):
-        """Возвращает всю историю в формате markdown"""
         md_parts = []
         for msg in self.messages:
             if msg["role"] == "user":
@@ -23,3 +25,22 @@ class ChatManager:
 
     def clear(self):
         self.messages = []
+
+    def remove_last_message(self):
+        """Удаляет последнее сообщение (или пару) и возвращает текст пользователя."""
+        if not self.messages:
+            return None
+        
+        last_msg = self.messages.pop()
+        if last_msg["role"] == "user":
+            return last_msg["content"]
+        
+        if last_msg["role"] == "assistant" and len(self.messages) >= 1 and self.messages[-1]["role"] == "user":
+            user_msg = self.messages.pop()
+            return user_msg["content"]
+            
+        return None
+
+    def load_messages(self, messages: list):
+        """Загружает историю сообщений из JSON (заменяет текущую)"""
+        self.messages = messages.copy()

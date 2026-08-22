@@ -4,42 +4,36 @@ import socket
 import time
 from core.resource_monitor import ResourceMonitor
 
-
 class OllamaManager(QObject):
     """Управляет процессом Ollama-сервера"""
 
-    # Сигналы
-    started = pyqtSignal()           # Сервер запущен и готов
-    stopped = pyqtSignal()           # Сервер остановлен
-    error = pyqtSignal(str)          # Ошибка
-    log_line = pyqtSignal(str)       # Строка лога
-    needs_install = pyqtSignal()     # Требуется установка Ollama
-    conflict_detected = pyqtSignal() # Обнаружен конфликт (Ollama уже запущен)
+    started = pyqtSignal()
+    stopped = pyqtSignal()
+    error = pyqtSignal(str)
+    log_line = pyqtSignal(str)
+    needs_install = pyqtSignal()
+    conflict_detected = pyqtSignal()
 
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.process = None
-        self._is_our_process = False  # Наш ли это процесс
+        self._is_our_process = False
         self._log_file = None
         self._log_path = None
         self._pid_path = None
 
     def start(self):
         """Запускает Ollama-сервер"""
-        # 1. Проверяем, не запущен ли уже
         if self._is_port_busy():
-            # Порт занят — спрашиваем пользователя
             self.conflict_detected.emit()
             return
 
-        # 2. Проверяем наличие бинарника
         ollama_bin = self._get_ollama_binary()
         if not ollama_bin:
             self.needs_install.emit()
             return
 
-        # 3. Запускаем свой процесс
         self._start_process(ollama_bin)
 
     def use_existing(self):
@@ -51,18 +45,25 @@ class OllamaManager(QObject):
         """Убивает существующий Ollama и запускает свой"""
         import subprocess
         try:
+            # pkill возвращает 1, если процесс не найден — это нормально
             subprocess.run(["pkill", "-9", "ollama"], timeout=5)
-            time.sleep(1)  # Ждём освобождения порта
         except Exception as e:
             self.error.emit(f"Не удалось убить Ollama: {e}")
             return
 
-        # Проверяем, что порт освободился
-        if self._is_port_busy():
-            self.error.emit("Порт 11434 всё ещё занят")
+        # Ждём освобождения порта (TCP TIME_WAIT может длиться до 60 сек)
+        # Пробуем до 60 раз по 500мс = 30 секунд
+        port_freed = False
+        for _ in range(60):
+            if not self._is_port_busy():
+                port_freed = True
+                break
+            time.sleep(0.5)
+
+        if not port_freed:
+            self.error.emit("Порт 11434 не освободился за 30 секунд")
             return
 
-        # Запускаем свой процесс
         ollama_bin = self._get_ollama_binary()
         if ollama_bin:
             self._start_process(ollama_bin)
@@ -72,7 +73,7 @@ class OllamaManager(QObject):
     def stop(self):
         """Останавливает Ollama-сервер (только если это наш процесс)"""
         if not self._is_our_process:
-            return  # Не наш процесс — не трогаем
+            return
 
         if self.process:
             self.process.terminate()
@@ -80,14 +81,12 @@ class OllamaManager(QObject):
                 self.process.kill()
                 self.process.waitForFinished(1000)
 
-        # Удаляем PID-файл
         if self._pid_path and os.path.exists(self._pid_path):
             try:
                 os.remove(self._pid_path)
             except Exception:
                 pass
 
-        # Закрываем лог
         self._close_log_file()
 
         self._is_our_process = False
@@ -103,11 +102,9 @@ class OllamaManager(QObject):
 
     def _get_ollama_binary(self) -> str:
         """Возвращает путь к бинарнику Ollama"""
-        # 1. Локальный бинарник (из конфига)
         local_bin = self.config.get_ollama_binary_path()
         if os.path.exists(local_bin):
             return local_bin
-        # 2. Системный путь
         import shutil
         system_bin = shutil.which("ollama")
         if system_bin:
@@ -118,7 +115,6 @@ class OllamaManager(QObject):
         """Запускает QProcess с ollama serve"""
         app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-        # Открываем файл лога
         log_dir = os.path.join(app_dir, "data", "shared", "logs")
         os.makedirs(log_dir, exist_ok=True)
         date_str = time.strftime("%Y-%m-%d")
@@ -134,27 +130,21 @@ class OllamaManager(QObject):
             print(f"[OllamaManager] Не удалось открыть файл лога: {e}")
             self._log_file = None
 
-        # Создаём PID-файл
         pid_dir = os.path.join(app_dir, "data", "shared", "pids")
         os.makedirs(pid_dir, exist_ok=True)
         self._pid_path = os.path.join(pid_dir, "ollama.pid")
 
-        # Запускаем процесс
         self.process = QProcess()
         self.process.setProgram(ollama_bin)
         self.process.setArguments(["serve"])
 
-        # Передаём переменные окружения
         env = QProcessEnvironment.systemEnvironment()
-        # Путь к моделям Ollama — через PathsManager (единый источник дефолтов)
         from core.paths_manager import PathsManager
         pm = PathsManager()
         models_path = pm.get_path(self.config, "ollama_models")
         env.insert("OLLAMA_MODELS", models_path)
         env.insert("OLLAMA_HOST", "127.0.0.1:11434")
-        
-        
-        # Библиотеки (CUDA, ROCm) — в bin/ollama/lib/ollama/
+
         lib_dir = self.config.get_ollama_lib_dir()
         if os.path.exists(lib_dir):
             current_ld_path = env.value("LD_LIBRARY_PATH", "")
@@ -170,7 +160,6 @@ class OllamaManager(QObject):
         self.process.errorOccurred.connect(self._on_process_error)
         self.process.start()
 
-        # Записываем PID
         pid = self.process.processId()
         try:
             with open(self._pid_path, "w") as f:
@@ -179,8 +168,6 @@ class OllamaManager(QObject):
             pass
 
         self._is_our_process = True
-
-        # Ждём готовности
         self._wait_ready()
 
     def _on_output(self):
@@ -190,25 +177,19 @@ class OllamaManager(QObject):
             line = line.strip()
             if not line:
                 continue
-
-            # Пишем в лог
             if self._log_file:
                 try:
                     self._log_file.write(line + '\n')
                     self._log_file.flush()
                 except Exception:
                     pass
-
-            # Эмитим сигнал
             self.log_line.emit(line)
 
     def _on_finished(self, exit_code, exit_status):
         """Процесс завершён"""
         self._close_log_file()
-
-        if exit_code != 0 and exit_code != 15:  # 15 = SIGTERM
+        if exit_code != 0 and exit_code != 15:
             self.error.emit(f"Ollama завершился с кодом {exit_code}")
-
         self._is_our_process = False
         self.stopped.emit()
 
@@ -244,7 +225,6 @@ class OllamaManager(QObject):
         start = time.time()
         while time.time() - start < timeout:
             if self._is_port_busy():
-                # Записываем PID (на случай, если процесс ещё не записал)
                 if self.process:
                     pid = self.process.processId()
                     try:

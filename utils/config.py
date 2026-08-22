@@ -249,3 +249,7 @@ class Config:
     def set_feature(self, feature_name: str, enabled: bool):
         """Устанавливает флаг компонента (features/*)."""
         self.set(f"features/{feature_name}", enabled)
+
+    def get_chats_dir(self):
+        """Папка для сохранения чатов"""
+        return os.path.join(self.get_data_dir(), "ollama", "chats")

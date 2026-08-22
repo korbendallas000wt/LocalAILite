@@ -133,15 +133,17 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
-        self.settings_action = QAction("Настройки", self)
-        self.settings_action.triggered.connect(self._show_settings_dialog)
-        menubar.addAction(self.settings_action)
         
         # Освобождение ресурсов
         tools_menu = menubar.addMenu("Инструменты")
         cleanup_action = QAction("🧹 Освободить ресурсы", self)
         cleanup_action.triggered.connect(self._manual_cleanup)
         tools_menu.addAction(cleanup_action)
+        
+        # Настройки — всегда в конце меню (стандарт UX)
+        self.settings_action = QAction("Настройки", self)
+        self.settings_action.triggered.connect(self._show_settings_dialog)
+        menubar.addAction(self.settings_action)
     
     def _show_settings_dialog(self):
         from core.paths_manager import PathsManager
