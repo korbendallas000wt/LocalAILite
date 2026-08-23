@@ -24,45 +24,56 @@ class ChatExporter:
         messages: List[Dict],
         settings: Dict,
         save_json: bool = True,
-        save_txt: bool = True
+        save_txt: bool = True,
+        target_base_path: Optional[str] = None
     ) -> Dict[str, str]:
         """
         Экспортирует чат в JSON и/или TXT.
-        
-        Args:
-            title: Название чата
-            messages: Список сообщений из ChatManager
-            settings: Настройки чата (model, temperature, etc.)
-            save_json: Сохранять ли JSON
-            save_txt: Сохранять ли TXT
-        
-        Returns:
-            Словарь с путями к сохранённым файлам: {"json": path, "txt": path}
+        Если target_base_path указан, сохраняет туда (перезапись).
+        Иначе генерирует новое уникальное имя файла.
         """
-        # Генерируем ID и timestamp
-        created_at = datetime.now()
-        chat_id = created_at.strftime("chat_%Y-%m-%d_%H-%M-%S")
-        
-        # Формируем имя файла (без расширения)
-        base_filename = self._generate_filename(created_at, title)
+        if target_base_path:
+            base_filename = target_base_path
+            json_path = base_filename + ".json"
+            if os.path.exists(json_path):
+                try:
+                    created_at = datetime.fromtimestamp(os.path.getmtime(json_path))
+                except Exception:
+                    created_at = datetime.now()
+            else:
+                created_at = datetime.now()
+            chat_id = self._get_chat_id(json_path)
+        else:
+            created_at = datetime.now()
+            chat_id = created_at.strftime("chat_%Y-%m-%d_%H-%M-%S")
+            base_filename = self._generate_filename(created_at, title)
+            sample_path = os.path.join(self.chats_dir, base_filename + ".json")
+            unique_path = self._ensure_unique(sample_path)
+            base_filename = os.path.splitext(unique_path)[0]
         
         result = {}
-        
-        # Сохраняем JSON
         if save_json:
-            json_path = os.path.join(self.chats_dir, f"{base_filename}.json")
-            json_path = self._ensure_unique(json_path)
+            json_path = base_filename + ".json"
             self._save_json(json_path, chat_id, title, created_at, messages, settings)
             result["json"] = json_path
         
-        # Сохраняем TXT
         if save_txt:
-            txt_path = os.path.join(self.chats_dir, f"{base_filename}.txt")
-            txt_path = self._ensure_unique(txt_path)
+            txt_path = base_filename + ".txt"
             self._save_txt(txt_path, title, created_at, messages, settings)
             result["txt"] = txt_path
         
         return result
+
+    def _get_chat_id(self, json_path: str) -> str:
+        """Извлекает ID из существующего JSON или генерирует новый"""
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data.get("id", "unknown")
+            except Exception:
+                pass
+        return datetime.now().strftime("chat_%Y-%m-%d_%H-%M-%S")
     
     def _generate_filename(self, created_at: datetime, title: str) -> str:
         """

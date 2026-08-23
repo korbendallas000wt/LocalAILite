@@ -38,8 +38,9 @@ class ChatWidget(QWidget):
         self._message_responses.append(markdown_text)
 
         html = self.parser.render_assistant_message(markdown_text, msg_index)
-        if stats_dict and (stats_dict.get('completion_tokens', 0) > 0 or stats_dict.get('duration_sec', 0) > 0):
-            html += self.parser.render_stats(stats_dict, markdown_text, msg_index)
+        # Всегда рендерим блок статистики/копирования, даже если stats пустой или нулевой.
+        # Это гарантирует наличие кнопки "📋 копия" для загруженных чатов.
+        html += self.parser.render_stats(stats_dict or {}, markdown_text, msg_index)
 
         self._history_html.append(("assistant", html))
         self._rerender()

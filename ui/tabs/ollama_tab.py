@@ -30,6 +30,8 @@ class OllamaTab(QWidget):
         self._chat_locked = False
         self._current_mode = "new"
         self._pending_clear_after_save = False  # Флаг для очистки после сохранения
+        self._current_chat_base_path = None     # Путь к загруженному файлу (без расширения)
+        self._current_chat_title = "Без названия"
 
         self._progress_timer = QTimer()
         self._progress_timer.setInterval(1000)
@@ -114,6 +116,7 @@ class OllamaTab(QWidget):
 
     def _on_chat_selected(self, file_path: str):
         """Загрузка чата из JSON"""
+        print(f"[DEBUG] _on_chat_selected: загружаем {file_path}, текущий mode='{self._current_mode}'")
         if not os.path.exists(file_path):
             self._set_status("⚠ Файл чата не найден", "red")
             return
@@ -127,6 +130,11 @@ class OllamaTab(QWidget):
             
             if "settings" in chat_data:
                 self.settings_panel.apply_settings_from_chat(chat_data["settings"])
+            
+            # Сохраняем путь и название для последующего сохранения
+            self._current_chat_title = chat_data.get("title", os.path.splitext(os.path.basename(file_path))[0])
+            self._current_chat_base_path = os.path.splitext(file_path)[0]
+            print(f"[DEBUG] _on_chat_selected: запомнили base_path='{self._current_chat_base_path}', title='{self._current_chat_title}'")
             
             self._chat_locked = True
             self.settings_panel.set_mode(self._current_mode, locked=True)
@@ -166,6 +174,8 @@ class OllamaTab(QWidget):
         self.settings_panel.chat_file_edit.clear()
         self._chat_locked = False
         self._current_mode = "new"
+        self._current_chat_base_path = None
+        self._current_chat_title = "Без названия"
         self.settings_panel.set_mode("new", locked=False)
         self._update_undo_button_state()
         self.update_bar_state("prompt", "")
@@ -257,7 +267,7 @@ class OllamaTab(QWidget):
         timeout_sec = self.settings_panel.timeout_spin.value()
         self.update_bar_state("progress_total", timeout_sec)
 
-        self.chat_manager.add_assistant_message(self._current_response_text)
+        self.chat_manager.add_assistant_message(self._current_response_text, self.last_stats)
         self.settings_panel.save_settings()
 
         self.chat_widget.append_assistant_message(self._current_response_text, self.last_stats)
@@ -324,10 +334,35 @@ class OllamaTab(QWidget):
         self._set_status("📎 Загрузка файлов пока в разработке", "#DAA520")
 
     def _on_export_chat(self):
+        print(f"[DEBUG] _on_export_chat: mode='{self._current_mode}', base_path='{self._current_chat_base_path}', title='{self._current_chat_title}'")
         if not self.chat_manager.messages:
             self._set_status("⚠ Нечего сохранять — чат пуст", "orange")
             return
         
+        # Логика сохранения в зависимости от режима и наличия исходного файла
+        if self._current_mode == "resume" and self._current_chat_base_path:
+            # Режим "Продолжить": сохраняем поверх оригинала без диалога
+            self._save_chat(self._current_chat_title, self._current_chat_base_path)
+            return
+        
+        if self._current_mode == "edit" and self._current_chat_base_path:
+            # Режим "Изменить": предлагаем выбор
+            from PyQt6.QtWidgets import QMessageBox
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Сохранение изменённого чата")
+            msg_box.setText("Чат был загружен и изменён. Выберите действие:")
+            btn_overwrite = msg_box.addButton("Перезаписать оригинал", QMessageBox.ButtonRole.AcceptRole)
+            btn_new = msg_box.addButton("Сохранить как новый", QMessageBox.ButtonRole.ActionRole)
+            msg_box.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+            msg_box.exec()
+            
+            if msg_box.clickedButton() == btn_overwrite:
+                self._save_chat(self._current_chat_title, self._current_chat_base_path)
+            elif msg_box.clickedButton() == btn_new:
+                self._show_save_dialog(self._current_chat_title)
+            return
+        
+        # Стандартное поведение для нового чата или если путь неизвестен
         if self.config.get("chat_auto_title", True):
             self._set_status("🤖 Генерация названия...", "#DAA520")
             self._generate_title_async()
@@ -385,7 +420,7 @@ class OllamaTab(QWidget):
             # Сбрасываем флаг, если пользователь отменил ввод названия
             self._pending_clear_after_save = False
 
-    def _save_chat(self, title: str):
+    def _save_chat(self, title: str, target_base_path: str = None):
         try:
             settings = {
                 "model": self.settings_panel.model_combo.currentText(),
@@ -405,17 +440,20 @@ class OllamaTab(QWidget):
                 messages=self.chat_manager.messages,
                 settings=settings,
                 save_json=self.config.get("chat_save_json", True),
-                save_txt=self.config.get("chat_save_txt", True)
+                save_txt=self.config.get("chat_save_txt", True),
+                target_base_path=target_base_path
             )
             
             saved_files = []
             if "json" in result: saved_files.append("JSON")
             if "txt" in result: saved_files.append("TXT")
             
-            self._chat_locked = False
-            self.settings_panel.set_mode(self._current_mode, locked=False)
+            # НЕ размораживаем UI после сохранения — пользователь может продолжить писать
+            # self._chat_locked = False
+            # self.settings_panel.set_mode(self._current_mode, locked=False)
             
-            self._set_status(f"💾 Чат '{title}' сохранён ({', '.join(saved_files)})", "green")
+            display_name = os.path.basename(target_base_path) if target_base_path else title
+            self._set_status(f"💾 Чат '{display_name}' сохранён ({', '.join(saved_files)})", "green")
             
             # Проверяем флаг и очищаем чат, если нужно
             if self._pending_clear_after_save:
