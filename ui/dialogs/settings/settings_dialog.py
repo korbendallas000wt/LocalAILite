@@ -9,10 +9,11 @@ from ui.dialogs.settings.chat_settings_widget import ChatSettingsWidget
 class SettingsDialog(QDialog):
     """Главный диалог настроек приложения"""
     
-    def __init__(self, config, resource_manager=None, parent=None):
+    def __init__(self, config, resource_manager=None, ollama_manager=None, parent=None):
         super().__init__(parent)
         self.config = config
         self.resource_manager = resource_manager
+        self.ollama_manager = ollama_manager
         self.setWindowTitle("Настройки")
         self.setMinimumSize(500, 500)
         layout = QVBoxLayout(self)
@@ -21,7 +22,7 @@ class SettingsDialog(QDialog):
         self.tabs = QTabWidget()
 
         # Вкладка Общие (пути)
-        self.paths_widget = PathsSettingsWidget(config)
+        self.paths_widget = PathsSettingsWidget(config, ollama_manager)
         self.tabs.addTab(self.paths_widget, "📁 Общие")
         self.paths_widget.all_valid.connect(self._on_all_valid)
 

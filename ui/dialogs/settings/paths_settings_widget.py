@@ -9,9 +9,10 @@ class PathsSettingsWidget(QWidget):
     # Сигнал о готовности (все поля зелёные)
     all_valid = pyqtSignal()
 
-    def __init__(self, config):
+    def __init__(self, config, ollama_manager=None):
         super().__init__()
         self.config = config
+        self.ollama_manager = ollama_manager
         self.validator = PathValidator()
         self._ollama_retry_count = 0
         self._ollama_max_retries = 5
@@ -181,8 +182,14 @@ class PathsSettingsWidget(QWidget):
         self._start_ollama_retries()
 
     def _start_ollama_retries(self):
-        """Запускает 5 попыток подключения к Ollama с интервалом 1 сек"""
+        """Запускает попытки подключения к Ollama с интервалом 1 сек"""
         self._ollama_retry_count = 0
+        
+        # Если Ollama не запущен — запускаем его
+        if self.ollama_manager and not self.ollama_manager.is_running():
+            print("[PathsSettingsWidget] Ollama не запущен, запускаем...")
+            self.ollama_manager.start()
+        
         self.ollama_status.setText("⏳")
         self.ollama_status.setStyleSheet("color: orange;")
         self.ollama_error.setText("Подключение...")
