@@ -182,25 +182,29 @@ class MarkdownParser:
                     buttons.append(f'<a href="#loadchat:{alt_num}" style="{style}text-decoration:none;font-size:10px;padding:0 4px;">№{alt_num}</a>')
             
             buttons_html = (
-                f'<div style="margin-top:4px;padding-top:4px;'
-                f'border-top:1px solid {colors["dim"]};'
-                f'display:flex;gap:8px;font-size:10px;">'
+                f'<table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 6px 0;">'
+                f'<tr>'
+                f'<td width="30%"></td>'
+                f'<td style="font-size:10px;color:{colors["dim"]};'
+                f'padding:4px 10px;border-top:1px solid {colors["dim"]};">'
                 f'{" &nbsp;|&nbsp; ".join(buttons)}'
-                f'</div>'
+                f'</td>'
+                f'</tr>'
+                f'</table>'
             )
             
         return (
-            f'<table width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0;">'
+            f'<table width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 0 0;">'
             f'<tr>'
             f'<td width="30%"></td>'
             f'<td style="background:{colors["alt_base"]};'
             f'border-right:3px solid {colors["highlight"]};'
             f'padding:6px 10px;font-size:0.9em;color:{colors["text"]};">'
             f'<div style="white-space:pre-wrap;">{escaped}</div>'
-            f'{buttons_html}'
             f'</td>'
             f'</tr>'
             f'</table>'
+            f'{buttons_html}'
         )
 
     def render_assistant_message(self, markdown_text, msg_index=-1):

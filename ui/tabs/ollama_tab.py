@@ -533,7 +533,11 @@ class OllamaTab(QWidget):
 
         self.chat_widget.append_assistant_message(self._current_response_text, self.last_stats)
         self._update_undo_button_state()
+        # Если было ветвление — перерисовать чат для показа новых кнопок навигации
+        was_branching = self._pending_sync_variants is not None
         self._autosave_current()
+        if was_branching:
+            self._reload_chat_view()
 
         self.resource_manager.release_resource()
         self.update_bar_state("is_running", False)
