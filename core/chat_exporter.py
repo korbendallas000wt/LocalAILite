@@ -1,8 +1,14 @@
 """
-Экспорт чатов в JSON и TXT форматы.
+Экспорт чатов в JSON и TXT форматы (Архитектура папок и ветвления).
 
 JSON — для машины (RAG, поиск, точное воспроизведение)
 TXT — для человека (чтение, архив)
+
+Структура:
+data/ollama/chats/{chat_folder_name}/
+ ├── main.json                    # Последняя активная последовательность + словарь branches
+ ├── main.txt                     # Человекочитаемая версия
+ └── branch_YYYY-MM-DD_HH-MM.json # Ветка (техническое имя)
 """
 import json
 import os
@@ -10,9 +16,8 @@ import re
 from datetime import datetime
 from typing import List, Dict, Optional
 
-
 class ChatExporter:
-    """Экспорт чата в JSON и/или TXT"""
+    """Экспорт чата в JSON и/или TXT с поддержкой папок и ветвления"""
     
     def __init__(self, chats_dir: str):
         self.chats_dir = chats_dir
@@ -20,140 +25,101 @@ class ChatExporter:
     
     def export_chat(
         self,
+        chat_folder_name: str,
         title: str,
         messages: List[Dict],
         settings: Dict,
         save_json: bool = True,
         save_txt: bool = True,
-        target_base_path: Optional[str] = None
+        is_branch: bool = False,
+        parent_user_msg_index: Optional[int] = None
     ) -> Dict[str, str]:
-        """
-        Экспортирует чат в JSON и/или TXT.
-        Если target_base_path указан, сохраняет туда (перезапись).
-        Иначе генерирует новое уникальное имя файла.
-        """
-        if target_base_path:
-            base_filename = target_base_path
-            json_path = base_filename + ".json"
-            if os.path.exists(json_path):
-                try:
-                    created_at = datetime.fromtimestamp(os.path.getmtime(json_path))
-                except Exception:
-                    created_at = datetime.now()
-            else:
-                created_at = datetime.now()
-            chat_id = self._get_chat_id(json_path)
-        else:
-            created_at = datetime.now()
-            chat_id = created_at.strftime("chat_%Y-%m-%d_%H-%M-%S")
-            base_filename = self._generate_filename(created_at, title)
-            sample_path = os.path.join(self.chats_dir, base_filename + ".json")
-            unique_path = self._ensure_unique(sample_path)
-            base_filename = os.path.splitext(unique_path)[0]
+        safe_folder_name = self._sanitize_filename(chat_folder_name) or "unnamed_chat"
+        folder_path = os.path.join(self.chats_dir, safe_folder_name)
+        os.makedirs(folder_path, exist_ok=True)
         
-        result = {}
+        created_at = datetime.now()
+        chat_id = created_at.strftime("chat_%Y-%m-%d_%H-%M-%S")
+        
+        result = {"folder": folder_path}
+        
         if save_json:
-            json_path = base_filename + ".json"
-            self._save_json(json_path, chat_id, title, created_at, messages, settings)
-            result["json"] = json_path
+            if is_branch and parent_user_msg_index is not None:
+                time_str = created_at.strftime("%Y-%m-%d_%H-%M")
+                branch_filename = f"branch_{time_str}.json"
+                branch_path = os.path.join(folder_path, branch_filename)
+                
+                # 1. Архивируем старый вариант (то, что сейчас в main.json) как ветку
+                main_path = os.path.join(folder_path, "main.json")
+                main_data = {}
+                if os.path.exists(main_path):
+                    try:
+                        with open(main_path, 'r', encoding='utf-8') as f:
+                            main_data = json.load(f)
+                    except Exception:
+                        pass
+                
+                if main_data.get("messages"):
+                    branch_data = {
+                        "id": f"branch_{time_str}",
+                        "title": main_data.get("title", title),
+                        "created_at": created_at.isoformat(),
+                        "parent_user_msg_index": parent_user_msg_index,
+                        "settings": main_data.get("settings", settings),
+                        "messages": main_data["messages"]
+                    }
+                    with open(branch_path, 'w', encoding='utf-8') as f:
+                        json.dump(branch_data, f, ensure_ascii=False, indent=2)
+                    result["json"] = branch_path
+                    
+                    if "branches" not in main_data:
+                        main_data["branches"] = {}
+                    idx_str = str(parent_user_msg_index)
+                    if idx_str not in main_data["branches"]:
+                        main_data["branches"][idx_str] = []
+                    if branch_filename not in main_data["branches"][idx_str]:
+                        main_data["branches"][idx_str].append(branch_filename)
+                
+                # 2. Записываем новый вариант как main.json
+                main_data["title"] = title
+                main_data["messages"] = messages
+                main_data["settings"] = settings
+                main_data["last_updated"] = created_at.isoformat()
+                
+                with open(main_path, 'w', encoding='utf-8') as f:
+                    json.dump(main_data, f, ensure_ascii=False, indent=2)
+                result["main_json"] = main_path
+            else:
+                # Сохраняем как main.json (первый чат или обновление без ветвления)
+                main_path = os.path.join(folder_path, "main.json")
+                main_data = {
+                    "id": chat_id,
+                    "title": title,
+                    "created_at": created_at.isoformat(),
+                    "settings": settings,
+                    "messages": messages,
+                    "branches": {} # Инициализируем пустой словарь веток
+                }
+                with open(main_path, 'w', encoding='utf-8') as f:
+                    json.dump(main_data, f, ensure_ascii=False, indent=2)
+                result["json"] = main_path
+                result["main_json"] = main_path
         
         if save_txt:
-            txt_path = base_filename + ".txt"
+            base_txt = "main.txt" if not is_branch else f"branch_{created_at.strftime('%Y-%m-%d_%H-%M')}.txt"
+            txt_path = os.path.join(folder_path, base_txt)
             self._save_txt(txt_path, title, created_at, messages, settings)
             result["txt"] = txt_path
-        
+            
         return result
-
-    def _get_chat_id(self, json_path: str) -> str:
-        """Извлекает ID из существующего JSON или генерирует новый"""
-        if os.path.exists(json_path):
-            try:
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    return data.get("id", "unknown")
-            except Exception:
-                pass
-        return datetime.now().strftime("chat_%Y-%m-%d_%H-%M-%S")
-    
-    def _generate_filename(self, created_at: datetime, title: str) -> str:
-        """
-        Генерирует имя файла: дата + заголовок (санитизированный).
-        
-        Примеры:
-        - "2026-08-20_Обсуждение_RAG"
-        - "2026-08-20_14-32-15" (если заголовок пустой)
-        """
-        date_str = created_at.strftime("%Y-%m-%d")
-        
-        if not title or not title.strip():
-            # Пустой заголовок — используем timestamp
-            time_str = created_at.strftime("%H-%M-%S")
-            return f"{date_str}_{time_str}"
-        
-        # Санитизируем заголовок
-        sanitized = self._sanitize_filename(title)
-        # Ограничиваем длину
-        max_title_len = 40
-        if len(sanitized) > max_title_len:
-            sanitized = sanitized[:max_title_len]
-        
-        return f"{date_str}_{sanitized}"
     
     def _sanitize_filename(self, text: str) -> str:
-        """
-        Санитизирует строку для использования в имени файла.
-        
-        - Заменяет пробелы на _
-        - Убирает спецсимволы
-        - Заменяет переносы строк на пробелы
-        """
-        # Заменяем переносы строк на пробелы
         text = text.replace('\n', ' ').replace('\r', ' ')
-        # Заменяем пробелы на _
         text = re.sub(r'\s+', '_', text)
-        # Убираем спецсимволы (оставляем буквы, цифры, _, -)
         text = re.sub(r'[^\w\-_]', '', text, flags=re.UNICODE)
-        # Убираем повторяющиеся _
         text = re.sub(r'_+', '_', text)
-        # Убираем _ в начале и конце
         text = text.strip('_')
-        
         return text if text else "chat"
-    
-    def _ensure_unique(self, filepath: str) -> str:
-        """
-        Если файл уже существует, добавляет суффикс _1, _2, etc.
-        """
-        if not os.path.exists(filepath):
-            return filepath
-        
-        base, ext = os.path.splitext(filepath)
-        counter = 1
-        while os.path.exists(f"{base}_{counter}{ext}"):
-            counter += 1
-        
-        return f"{base}_{counter}{ext}"
-    
-    def _save_json(
-        self,
-        filepath: str,
-        chat_id: str,
-        title: str,
-        created_at: datetime,
-        messages: List[Dict],
-        settings: Dict
-    ):
-        """Сохраняет чат в JSON"""
-        data = {
-            "id": chat_id,
-            "title": title,
-            "created_at": created_at.isoformat(),
-            "settings": settings,
-            "messages": messages
-        }
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
     
     def _save_txt(
         self,
@@ -163,14 +129,9 @@ class ChatExporter:
         messages: List[Dict],
         settings: Dict
     ):
-        """Сохраняет чат в TXT (markdown)"""
         lines = []
-        
-        # Заголовок
         lines.append(f"# {title}")
         lines.append("")
-        
-        # Метаданные
         lines.append(f"Дата: {created_at.strftime('%Y-%m-%d %H:%M:%S')}")
         if "model" in settings:
             lines.append(f"Модель: {settings['model']}")
@@ -178,13 +139,11 @@ class ChatExporter:
             lines.append(f"Temperature: {settings['temperature']}")
         lines.append("")
         
-        # Сообщения
         for msg in messages:
             role = "Вы" if msg["role"] == "user" else "Модель"
             lines.append(f"== {role} ==")
             lines.append(msg["content"])
             
-            # Метеданные ответа (если есть stats)
             if msg["role"] == "assistant" and "stats" in msg:
                 stats = msg["stats"]
                 stats_parts = []
@@ -193,8 +152,7 @@ class ChatExporter:
                 if "duration_sec" in stats:
                     stats_parts.append(f"{stats['duration_sec']:.1f} сек")
                 if stats_parts:
-                    lines.append(f"\n[{', '.join(stats_parts)}]")
-            
+                    lines.append(f"[{{', '.join(stats_parts)}}]")
             lines.append("")
         
         with open(filepath, 'w', encoding='utf-8') as f:

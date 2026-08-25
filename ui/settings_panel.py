@@ -121,12 +121,12 @@ class SettingsPanel(QWidget):
     def _browse_chat(self):
         from PyQt6.QtWidgets import QFileDialog
         chats_dir = self.config.get("chats_dir", "data/ollama/chats")
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Выберите чат для загрузки", chats_dir, "JSON файлы (*.json)"
+        folder_path = QFileDialog.getExistingDirectory(
+            self, "Выберите папку чата", chats_dir
         )
-        if file_path:
-            self.chat_file_edit.setText(file_path)
-            self.chat_selected.emit(file_path)
+        if folder_path:
+            self.chat_file_edit.setText(folder_path)
+            self.chat_selected.emit(folder_path)
 
     def _reset_settings(self):
         """Сбрасывает только настройки генерации к дефолтным значениям"""

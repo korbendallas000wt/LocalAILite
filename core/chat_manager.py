@@ -1,12 +1,29 @@
+import uuid
+
+
 class ChatManager:
     def __init__(self):
         self.messages = []
+        self._user_msg_counter = 0  # Счётчик для уникальных индексов сообщений пользователя
 
-    def add_user_message(self, content):
-        self.messages.append({"role": "user", "content": content})
+    def add_user_message(self, content, user_msg_index=None):
+        if user_msg_index is None:
+            user_msg_index = self._user_msg_counter
+            self._user_msg_counter += 1
+        elif user_msg_index >= self._user_msg_counter:
+            # Переиспользование индекса при ветвлении: сдвигаем счётчик
+            self._user_msg_counter = user_msg_index + 1
+        msg = {
+            "role": "user", 
+            "content": content, 
+            "user_msg_index": user_msg_index,
+            "id": str(uuid.uuid4()),
+            "variants": []
+        }
+        self.messages.append(msg)
 
     def add_assistant_message(self, content, stats=None):
-        msg = {"role": "assistant", "content": content}
+        msg = {"id": str(uuid.uuid4()), "role": "assistant", "content": content}
         if stats:
             msg["stats"] = stats
         self.messages.append(msg)
@@ -22,6 +39,35 @@ class ChatManager:
             elif msg["role"] == "assistant":
                 md_parts.append(f"## Модель\n\n{msg['content']}\n")
         return "\n".join(md_parts)
+
+    def recalc_counter(self):
+        """Пересчитывает счётчик на основе максимального user_msg_index."""
+        max_index = -1
+        for msg in self.messages:
+            if msg.get("role") == "user":
+                idx = msg.get("user_msg_index", -1)
+                if idx > max_index:
+                    max_index = idx
+        self._user_msg_counter = max_index + 1
+
+    def set_next_index(self, n: int):
+        """Задаёт индекс для следующего нового сообщения (режим правки)."""
+        self._user_msg_counter = n
+
+    def get_variants_for(self, user_msg_index: int):
+        """Возвращает список вариантов для пользовательского сообщения с заданным индексом."""
+        for msg in self.messages:
+            if msg.get("role") == "user" and msg.get("user_msg_index") == user_msg_index:
+                return msg.get("variants", [])
+        return None
+
+    def set_variants_for(self, user_msg_index: int, variants):
+        """Устанавливает список вариантов для пользовательского сообщения."""
+        for msg in self.messages:
+            if msg.get("role") == "user" and msg.get("user_msg_index") == user_msg_index:
+                msg["variants"] = list(variants)
+                return True
+        return False
 
     def clear(self):
         self.messages = []
@@ -44,3 +90,27 @@ class ChatManager:
     def load_messages(self, messages: list):
         """Загружает историю сообщений из JSON (заменяет текущую)"""
         self.messages = messages.copy()
+
+        # Паспорта: выдаём id сообщениям, у которых его ещё нет (старые чаты)
+        for msg in self.messages:
+            if "id" not in msg:
+                msg["id"] = str(uuid.uuid4())
+        
+        # Восстанавливаем счётчик user_msg_index для совместимости со старыми чатами
+        max_index = -1
+        for msg in self.messages:
+            if msg.get("role") == "user":
+                idx = msg.get("user_msg_index", -1)
+                if idx > max_index:
+                    max_index = idx
+        
+        # Если индексов не было (старый формат), назначаем их заново
+        if max_index == -1:
+            current_idx = 0
+            for msg in self.messages:
+                if msg.get("role") == "user":
+                    msg["user_msg_index"] = current_idx
+                    current_idx += 1
+            max_index = current_idx - 1
+            
+        self._user_msg_counter = max_index + 1
