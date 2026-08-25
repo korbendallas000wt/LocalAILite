@@ -92,44 +92,6 @@ class ChatVersions:
         except Exception:
             return None
 
-    # ---------- Навигация: поиск вариантов в точке ----------
-
-    def find_alternatives(self, folder: str, current_number: int, user_msg_index: int) -> List[int]:
-        """Номера чатов, которые совпадают с текущим до узла (по паспортам) и различаются в самом узле."""
-        current = self.load(folder, current_number)
-        if current is None:
-            return []
-        cur_msgs = current.get("messages", [])
-        # Позиция узла в текущем чате
-        cur_pos = next((i for i, m in enumerate(cur_msgs)
-                        if m.get("role") == "user" and m.get("user_msg_index") == user_msg_index), -1)
-        if cur_pos == -1:
-            return []
-        # Паспорта префикса (всё до узла) и паспорт самого узла
-        prefix_ids = [m.get("id") for m in cur_msgs[:cur_pos]]
-        node_id = cur_msgs[cur_pos].get("id")
-
-        result = []
-        for num in self.list_numbers(folder):
-            if num == current_number:
-                continue
-            other = self.load(folder, num)
-            if other is None:
-                continue
-            oth_msgs = other.get("messages", [])
-            # Другой чат должен быть не короче префикса + узел
-            if len(oth_msgs) < len(prefix_ids) + 1:
-                continue
-            # Префикс должен совпадать по паспортам
-            if [m.get("id") for m in oth_msgs[:len(prefix_ids)]] != prefix_ids:
-                continue
-            # Кандидат на узел — сразу после префикса
-            cand = oth_msgs[len(prefix_ids)]
-            # Узел — пользовательское сообщение с другим паспортом
-            if cand.get("role") == "user" and cand.get("id") != node_id:
-                result.append(num)
-        return result
-
     # ---------- Варианты в сообщении (быстрая навигация) ----------
 
     def get_message_variants(self, folder: str, number: int, user_msg_index: int):

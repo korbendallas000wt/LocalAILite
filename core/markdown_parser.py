@@ -173,7 +173,7 @@ class MarkdownParser:
         if user_msg_index >= 0:
             buttons = []
             buttons.append(f'<a href="#trim:{user_msg_index}" style="color:{colors["dim"]};text-decoration:none;font-size:10px;padding:0 4px;opacity:0.7;">🗑 Удалить</a>')
-            buttons.append(f'<a href="#branch:{user_msg_index}" style="color:{colors["dim"]};text-decoration:none;font-size:10px;padding:0 4px;opacity:0.7;">✏ Изменить</a>')
+            buttons.append(f'<a href="#branch:{user_msg_index}" style="color:{colors["dim"]};text-decoration:none;font-size:10px;padding:0 4px;opacity:0.7;">✏ Правка</a>')
             # Навигация между вариантами (нумерованные чаты)
             if alternatives:
                 for alt_num in alternatives:

@@ -7,7 +7,6 @@ class ChatWidget(QWidget):
     # Сигналы для управления ветвлением
     trim_requested = pyqtSignal(int)       # user_msg_index
     branch_requested = pyqtSignal(int)     # user_msg_index
-    switch_branch_requested = pyqtSignal(int) # user_msg_index
     load_chat_requested = pyqtSignal(int)      # номер чата для загрузки
 
     def __init__(self):
@@ -129,12 +128,6 @@ class ChatWidget(QWidget):
             try:
                 user_idx = int(anchor.split(':')[1])
                 self.branch_requested.emit(user_idx)
-            except ValueError:
-                pass
-        elif anchor.startswith('#branches:'):
-            try:
-                user_idx = int(anchor.split(':')[1])
-                self.switch_branch_requested.emit(user_idx)
             except ValueError:
                 pass
         elif anchor.startswith('#loadchat:'):

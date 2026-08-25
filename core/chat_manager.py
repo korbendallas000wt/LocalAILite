@@ -1,4 +1,3 @@
-import uuid
 
 
 class ChatManager:
@@ -17,13 +16,12 @@ class ChatManager:
             "role": "user", 
             "content": content, 
             "user_msg_index": user_msg_index,
-            "id": str(uuid.uuid4()),
             "variants": []
         }
         self.messages.append(msg)
 
     def add_assistant_message(self, content, stats=None):
-        msg = {"id": str(uuid.uuid4()), "role": "assistant", "content": content}
+        msg = {"role": "assistant", "content": content}
         if stats:
             msg["stats"] = stats
         self.messages.append(msg)
@@ -91,11 +89,6 @@ class ChatManager:
         """Загружает историю сообщений из JSON (заменяет текущую)"""
         self.messages = messages.copy()
 
-        # Паспорта: выдаём id сообщениям, у которых его ещё нет (старые чаты)
-        for msg in self.messages:
-            if "id" not in msg:
-                msg["id"] = str(uuid.uuid4())
-        
         # Восстанавливаем счётчик user_msg_index для совместимости со старыми чатами
         max_index = -1
         for msg in self.messages:

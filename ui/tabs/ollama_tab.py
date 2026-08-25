@@ -4,7 +4,6 @@ from ui.chat_control_panel import ChatControlPanel
 from ui.settings_panel import SettingsPanel
 from core.chat_manager import ChatManager
 from core.chat_exporter import ChatExporter
-from core.branch_cache import BranchCache
 from core.chat_versions import ChatVersions
 from core.ollama_client import OllamaClient
 from PyQt6.QtCore import pyqtSignal, QTimer
@@ -34,14 +33,9 @@ class OllamaTab(QWidget):
         self._pending_clear_after_save = False  # Флаг для очистки после сохранения
         self._current_chat_base_path = None     # Путь к загруженному файлу (без расширения)
         self._current_chat_title = "Без названия"
-        self._current_branches = {}             # Словарь веток из загруженного JSON
-        self._is_branching = False              # Флаг: следующее сохранение — это ветка
-        self._branch_from_index = -1            # Индекс user-сообщения, от которого ветвимся"
-        self.branch_cache = BranchCache()        # Кэш веток активного чата
         self.chat_versions = None              # Модуль нумерованных чатов (создаётся при первом сообщении)
         self._chat_folder = None               # Путь к папке текущего чата (None = папка ещё не создана)
         self._chat_number = 0                  # Номер текущего чата в папке
-        self._pending_branch_tail = None         # Хвост, ждущий отправки новой ветки
         self._is_editing = False                   # Режим правки: кнопка «Изменить» нажата, ждём отправки
         self._edit_backup = None                   # Сохранённый хвост для отмены правки
         self._pending_sync_variants = None         # {fork_index, old_variants} — для синхронизации после сохранения
@@ -91,7 +85,6 @@ class OllamaTab(QWidget):
         # Подключение сигналов ветвления из chat_widget
         self.chat_widget.trim_requested.connect(self._on_trim_requested)
         self.chat_widget.branch_requested.connect(self._on_branch_requested)
-        self.chat_widget.switch_branch_requested.connect(self._on_switch_branch_requested)
         self.chat_widget.load_chat_requested.connect(self._on_load_chat_requested)
 
     def _on_timeout_changed(self, value):
@@ -163,9 +156,6 @@ class OllamaTab(QWidget):
             self._reload_chat_view()
             
             # Старая логика веток в новой модели не используется
-            self._current_branches = {}
-            self.branch_cache.clear()
-            self._pending_branch_tail = None
             print(f"[DEBUG] _on_chat_selected: папка='{self._chat_folder}', чат №{self._chat_number}")
             
             self._chat_locked = True
@@ -213,8 +203,6 @@ class OllamaTab(QWidget):
         self._current_mode = "new"
         self._current_chat_base_path = None
         self._current_chat_title = "Без названия"
-        self.branch_cache.clear()
-        self._pending_branch_tail = None
         self._chat_folder = None
         self._chat_number = 0
         self._is_editing = False
@@ -283,7 +271,7 @@ class OllamaTab(QWidget):
         
         # Получаем индекс нового сообщения и количество веток для него (диск + кэш)
         user_msg_index = self.chat_manager.messages[-1].get("user_msg_index", -1)
-        branches_count = self._branches_count_for(user_msg_index)
+        branches_count = self._chat_number
         self.chat_widget.append_user_message(text, user_msg_index, branches_count)
 
         self._current_response_text = ""
@@ -365,88 +353,6 @@ class OllamaTab(QWidget):
             self.update_bar_state("prompt", msg_text)
         self._set_status("✏ Режим правки: отредактируйте промпт и отправьте (или ↶ для отмены)", "#DAA520")
 
-    def _on_switch_branch_requested(self, user_msg_index: int):
-        """Диалог выбора ветки: все ветки (кэш + диск) для данного сообщения."""
-        idx_str = str(user_msg_index)
-        print(f"[DEBUG] 📂 клик: idx={user_msg_index}, кэш={[(b['id'], b['parent_user_msg_index']) for b in self.branch_cache.get_all()]}, диск={self._current_branches.get(idx_str, [])}")
-        options = []  # (label, source_type, ref)
-
-        for b in self.branch_cache.get_for_index(user_msg_index):
-            preview = self._branch_preview(b["messages"], user_msg_index)
-            options.append((f"🗂 Кэш: {preview}", "cache", b["id"]))
-
-        for filename in self._current_branches.get(idx_str, []):
-            preview = filename.replace("branch_", "").replace(".json", "").replace("_", " ")
-            options.append((f"💾 {preview}", "disk", filename))
-
-        if not options:
-            self._set_status("⚠ Нет доступных веток для этого сообщения", "orange")
-            return
-
-        labels = [o[0] for o in options]
-        from PyQt6.QtWidgets import QInputDialog
-        choice, ok = QInputDialog.getItem(
-            self, "Выбор ветки",
-            f"Варианты от сообщения #{user_msg_index}:",
-            labels, 0, False
-        )
-        if ok and choice:
-            selected = options[labels.index(choice)]
-            self._switch_to_branch(user_msg_index, selected[1], selected[2])
-
-    def _switch_to_branch(self, user_msg_index: int, source_type: str, ref):
-        """Своп: текущая последовательность уходит в кэш, выбранная становится активной."""
-        print(f"[DEBUG] своп НАЧАЛО: source={source_type}, ref={ref}, кэш до={[(b['id'], b['parent_user_msg_index']) for b in self.branch_cache.get_all()]}")
-        self.branch_cache.add(user_msg_index, self.chat_manager.messages, self._current_settings())
-        print(f"[DEBUG] своп: заархивировали текущее, кэш={[(b['id'], b['parent_user_msg_index']) for b in self.branch_cache.get_all()]}")
-
-        settings_to_apply = None
-        if source_type == "cache":
-            branch = self.branch_cache.get_by_id(ref)
-            if not branch:
-                self._set_status("❌ Ветка в кэше не найдена", "red")
-                return
-            messages = branch["messages"]
-            settings_to_apply = branch.get("settings")
-            self.branch_cache.remove_by_id(ref)
-            print(f"[DEBUG] своп: удалили выбранную, кэш={[(b['id'], b['parent_user_msg_index']) for b in self.branch_cache.get_all()]}")
-        else:
-            messages, settings_to_apply = self._read_disk_branch(ref)
-            if messages is None:
-                return
-            idx_str = str(user_msg_index)
-            if ref in self._current_branches.get(idx_str, []):
-                self._current_branches[idx_str].remove(ref)
-
-        self.chat_manager.load_messages(messages)
-        if settings_to_apply:
-            self.settings_panel.apply_settings_from_chat(settings_to_apply)
-        self._reload_chat_view()
-        self._set_status("🌿 Ветка переключена (предыдущая сохранена в кэш)", "green")
-
-    def _branch_preview(self, messages: list, user_msg_index: int) -> str:
-        """Короткое превью: текст сообщения пользователя в точке ветвления."""
-        for msg in messages:
-            if msg.get("role") == "user" and msg.get("user_msg_index") == user_msg_index:
-                text = msg.get("content", "").replace("\n", " ")
-                return text[:40] + ("…" if len(text) > 40 else "")
-        return "без превью"
-
-    def _read_disk_branch(self, branch_filename: str):
-        """Читает ветку с диска. Возвращает (messages, settings) или (None, None)."""
-        try:
-            if self._current_chat_base_path:
-                folder = os.path.dirname(self._current_chat_base_path)
-            else:
-                folder = self.config.get_chats_dir()
-            file_path = os.path.join(folder, branch_filename)
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            return data.get("messages", []), data.get("settings")
-        except Exception as e:
-            self._set_status(f"❌ Ошибка чтения ветки: {e}", "red")
-            return None, None
-
     def _reload_chat_view(self):
         """Перерисовывает чат на основе текущих сообщений в chat_manager"""
         self.chat_widget.clear_chat()
@@ -493,18 +399,6 @@ class OllamaTab(QWidget):
             "timeout": self.settings_panel.timeout_spin.value(),
             "stream": self.settings_panel.stream_check.isChecked()
         }
-
-    def _merged_branches(self) -> dict:
-        """Сводный словарь веток: на диске (_current_branches) + в кэше."""
-        merged = {k: list(v) for k, v in self._current_branches.items()}
-        for b in self.branch_cache.get_all():
-            key = str(b["parent_user_msg_index"])
-            merged.setdefault(key, []).append(f"__cache_{b['id']}__")
-        return merged
-
-    def _branches_count_for(self, user_msg_index: int) -> int:
-        """Общее число веток для сообщения: диск + кэш."""
-        return len(self._merged_branches().get(str(user_msg_index), []))
 
     def on_token(self, token):
         self._current_response_text += token
@@ -612,34 +506,20 @@ class OllamaTab(QWidget):
         self._set_status("📎 Загрузка файлов пока в разработке", "#DAA520")
 
     def _on_export_chat(self):
-        print(f"[DEBUG] _on_export_chat: mode='{self._current_mode}', base_path='{self._current_chat_base_path}', title='{self._current_chat_title}', is_branching={self._is_branching}")
+        print(f"[DEBUG] _on_export_chat: mode='{self._current_mode}', base_path='{self._current_chat_base_path}', title='{self._current_chat_title}'")
         if not self.chat_manager.messages:
             self._set_status("⚠ Нечего сохранять — чат пуст", "orange")
             return
         
-        # Если мы в режиме ветвления — сохраняем как ветку
-        if self._is_branching and self._current_chat_base_path:
-            print(f"[DEBUG] Сохраняем как ветку от индекса {self._branch_from_index}")
-            self._save_chat(self._current_chat_title, is_branch=True, parent_user_msg_index=self._branch_from_index)
-            # Сбрасываем флаги
-            self._is_branching = False
-            self._branch_from_index = -1
-            return
-        
         # Логика сохранения в зависимости от режима и наличия исходного файла
         if self._current_mode == "resume" and self._current_chat_base_path:
-            # Режим "Продолжить": обновляем main.json (is_branch=False)
-            self._save_chat(self._current_chat_title, is_branch=False)
+            # Режим "Продолжить": обновляем main.json
+            self._save_chat(self._current_chat_title)
             return
         
         if self._current_mode == "edit" and self._current_chat_base_path:
-            # Режим "Изменить": создаём ветку от последнего user-сообщения
-            last_user_idx = -1
-            for msg in reversed(self.chat_manager.messages):
-                if msg.get("role") == "user":
-                    last_user_idx = msg.get("user_msg_index", -1)
-                    break
-            self._save_chat(self._current_chat_title, is_branch=True, parent_user_msg_index=last_user_idx)
+            # Режим "Изменить": сохраняем чат (без создания ветки)
+            self._save_chat(self._current_chat_title)
             return
         
         # Стандартное поведение для нового чата или если путь неизвестен
@@ -700,7 +580,7 @@ class OllamaTab(QWidget):
             # Сбрасываем флаг, если пользователь отменил ввод названия
             self._pending_clear_after_save = False
 
-    def _save_chat(self, title: str, is_branch: bool = False, parent_user_msg_index: int = -1):
+    def _save_chat(self, title: str):
         try:
             settings = {
                 "model": self.settings_panel.model_combo.currentText(),
@@ -725,8 +605,6 @@ class OllamaTab(QWidget):
                 settings=settings,
                 save_json=self.config.get("chat_save_json", True),
                 save_txt=self.config.get("chat_save_txt", True),
-                is_branch=is_branch,
-                parent_user_msg_index=parent_user_msg_index if is_branch else None
             )
             
             saved_files = []
@@ -738,24 +616,12 @@ class OllamaTab(QWidget):
             # self.settings_panel.set_mode(self._current_mode, locked=False)
             
             display_name = folder_name
-            branch_note = " (новая ветка)" if is_branch else ""
-            self._set_status(f"💾 Чат '{display_name}' сохранён{branch_note} ({', '.join(saved_files)})", "green")
+            self._set_status(f"💾 Чат '{display_name}' сохранён ({', '.join(saved_files)})", "green")
             
             # Обновляем базовый путь, чтобы система знала, что чат сохранён
             if "main_json" in result:
                 self._current_chat_base_path = os.path.splitext(result["main_json"])[0]
                 self._current_chat_title = title
-            
-            # Обновляем _current_branches после сохранения
-            if is_branch and "json" in result and parent_user_msg_index != -1:
-                branch_filename = os.path.basename(result["json"])
-                idx_str = str(parent_user_msg_index)
-                if idx_str not in self._current_branches:
-                    self._current_branches[idx_str] = []
-                if branch_filename not in self._current_branches[idx_str]:
-                    self._current_branches[idx_str].append(branch_filename)
-                # Перерисовываем чат с обновлёнными кнопками
-                self._reload_chat_view()
             
             # Проверяем флаг и очищаем чат, если нужно
             if self._pending_clear_after_save:
