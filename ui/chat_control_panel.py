@@ -9,7 +9,7 @@ class ChatControlPanel(QWidget):
     new_chat_clicked = pyqtSignal()
     undo_last_clicked = pyqtSignal()
     attach_file_clicked = pyqtSignal()
-    export_chat_clicked = pyqtSignal()
+    rename_chat_clicked = pyqtSignal()
     delete_chat_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -35,9 +35,9 @@ class ChatControlPanel(QWidget):
         layout.addWidget(self.attach_btn)
 
         # Кнопка "Сохранить чат"
-        self.export_btn = QPushButton("💾 Сохранить")
-        self.export_btn.clicked.connect(self.export_chat_clicked.emit)
-        layout.addWidget(self.export_btn)
+        self.rename_btn = QPushButton("✏ Переименовать")
+        self.rename_btn.clicked.connect(self.rename_chat_clicked.emit)
+        layout.addWidget(self.rename_btn)
 
         # Кнопка "Удалить чат"
         self.delete_btn = QPushButton("❌ Удалить чат")
@@ -52,3 +52,7 @@ class ChatControlPanel(QWidget):
     def set_delete_enabled(self, enabled: bool):
         """Включает/выключает кнопку Удалить чат"""
         self.delete_btn.setEnabled(enabled)
+
+    def set_rename_enabled(self, enabled: bool):
+        """Включает/выключает кнопку Переименовать"""
+        self.rename_btn.setEnabled(enabled)

@@ -3,7 +3,6 @@ from ui.chat_widget import ChatWidget
 from ui.chat_control_panel import ChatControlPanel
 from ui.settings_panel import SettingsPanel
 from core.chat_manager import ChatManager
-from core.chat_exporter import ChatExporter
 from core.chat_versions import ChatVersions
 from core.ollama_client import OllamaClient
 from PyQt6.QtCore import pyqtSignal, QTimer
@@ -30,7 +29,6 @@ class OllamaTab(QWidget):
         # Состояние таба: свободное или зафиксированное
         self._chat_locked = False
         self._current_mode = "new"
-        self._pending_clear_after_save = False  # Флаг для очистки после сохранения
         self._current_chat_base_path = None     # Путь к загруженному файлу (без расширения)
         self._current_chat_title = "Без названия"
         self.chat_versions = None              # Модуль нумерованных чатов (создаётся при первом сообщении)
@@ -80,7 +78,7 @@ class OllamaTab(QWidget):
         self.chat_control_panel.new_chat_clicked.connect(self._on_new_chat_clicked)
         self.chat_control_panel.undo_last_clicked.connect(self.undo_last_message)
         self.chat_control_panel.attach_file_clicked.connect(self._on_attach_file)
-        self.chat_control_panel.export_chat_clicked.connect(self._on_export_chat)
+        self.chat_control_panel.rename_chat_clicked.connect(self._on_rename_chat)
         self.chat_control_panel.delete_chat_clicked.connect(self._on_delete_chat_clicked)
         
         # Подключение сигналов ветвления из chat_widget
@@ -162,6 +160,7 @@ class OllamaTab(QWidget):
             self._chat_locked = True
             self.settings_panel.set_mode(self._current_mode, locked=True)
             self.chat_control_panel.set_delete_enabled(True)
+            self.chat_control_panel.set_rename_enabled(True)
             
             self._update_undo_button_state()
             self._set_status(f"💾 Загружен чат №{self._chat_number} из '{os.path.basename(folder_path)}'", "green")
@@ -170,30 +169,34 @@ class OllamaTab(QWidget):
             self._set_status(f"❌ Ошибка загрузки чата: {e}", "red")
 
     def _on_new_chat_clicked(self):
-        """Кнопка '+ Новый чат' с защитным вопросом"""
-        # Если чат уже сохранён (есть base_path), просто очищаем его без лишних вопросов
-        if self._current_chat_base_path and len(self.chat_manager.messages) > 0:
+        """Кнопка "+ Новый чат" с защитным вопросом"""
+        if len(self.chat_manager.messages) == 0:
             self._clear_chat_internal()
             return
-            
-        if len(self.chat_manager.messages) > 0:
-            reply = QMessageBox.question(
-                self,
-                "Новый чат",
-                "Текущий чат не сохранён. Сохранить перед очисткой?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Yes
-            )
-            
-            if reply == QMessageBox.StandardButton.Yes:
-                # Устанавливаем флаг очистки после сохранения
-                self._pending_clear_after_save = True
-                self._on_export_chat()
-            elif reply == QMessageBox.StandardButton.No:
-                self._clear_chat_internal()
-            else:
-                return
-        else:
+
+        reply = QMessageBox.question(
+            self,
+            "Новый чат",
+            "Сохранить текущий чат перед началом нового?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes
+        )
+
+        if reply == QMessageBox.StandardButton.Cancel:
+            return
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # Автосохранение уже всё записало, просто очищаем
+            self._clear_chat_internal()
+        else:  # No
+            # Новый чат (создан в этой сессии) — удаляем папку целиком
+            if self._current_chat_base_path is None and self._chat_folder:
+                try:
+                    if self.chat_versions is not None:
+                        self.chat_versions.delete_folder(self._chat_folder)
+                except Exception as e:
+                    print(f"[DEBUG] Ошибка удаления папки: {e}")
+            # Загруженный чат — пока просто очищаем (откат через бэкап будет позже)
             self._clear_chat_internal()
 
     def _clear_chat_internal(self):
@@ -215,6 +218,7 @@ class OllamaTab(QWidget):
         self.update_bar_state("prompt", "")
         self._set_status("Чат очищен", "green")
         self.chat_control_panel.set_delete_enabled(False)
+        self.chat_control_panel.set_rename_enabled(False)
 
     def handle_prompt(self, text):
         if not text:
@@ -242,6 +246,7 @@ class OllamaTab(QWidget):
                 self._chat_number = 1
                 print(f"[DEBUG] Создана папка чата: {self._chat_folder}")
                 self.chat_control_panel.set_delete_enabled(True)
+            self.chat_control_panel.set_rename_enabled(True)
 
         timeout_sec = self.settings_panel.timeout_spin.value()
         self.update_bar_state("progress_total", timeout_sec)
@@ -534,133 +539,36 @@ class OllamaTab(QWidget):
     def _on_attach_file(self):
         self._set_status("📎 Загрузка файлов пока в разработке", "#DAA520")
 
-    def _on_export_chat(self):
-        print(f"[DEBUG] _on_export_chat: mode='{self._current_mode}', base_path='{self._current_chat_base_path}', title='{self._current_chat_title}'")
-        if not self.chat_manager.messages:
-            self._set_status("⚠ Нечего сохранять — чат пуст", "orange")
+    def _on_rename_chat(self):
+        """Переименовывает папку чата"""
+        if not self._chat_folder:
+            self._set_status("⚠ Нет активного чата для переименования", "orange")
             return
         
-        # Логика сохранения в зависимости от режима и наличия исходного файла
-        if self._current_mode == "resume" and self._current_chat_base_path:
-            # Режим "Продолжить": обновляем main.json
-            self._save_chat(self._current_chat_title)
+        current_name = os.path.basename(self._chat_folder)
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Переименовать чат",
+            "Новое название:",
+            text=current_name
+        )
+        
+        if not ok or not new_name.strip():
             return
         
-        if self._current_mode == "edit" and self._current_chat_base_path:
-            # Режим "Изменить": сохраняем чат (без создания ветки)
-            self._save_chat(self._current_chat_title)
+        new_name = new_name.strip()
+        if new_name == current_name:
+            self._set_status("✏ Название не изменилось", "orange")
             return
         
-        # Стандартное поведение для нового чата или если путь неизвестен
-        if self.config.get("chat_auto_title", True):
-            self._set_status("🤖 Генерация названия...", "#DAA520")
-            self._generate_title_async()
-        else:
-            self._show_save_dialog("")
-
-    def _generate_title_async(self):
-        context_messages = []
-        for msg in self.chat_manager.messages[:6]:
-            role = "Пользователь" if msg["role"] == "user" else "Ассистент"
-            content = msg["content"][:200]
-            context_messages.append(f"{role}: {content}")
-        
-        prompt = (
-            "Придумай короткий заголовок (максимум 3 слова) для этого диалога. "
-            "Заголовок должен отражать основную тему. "
-            "Отвечай ТОЛЬКО самим заголовком, без кавычек и пояснений.\n\n"
-            + "\n".join(context_messages)
-        )
-
-        self._title_buffer = ""
-        self._title_client = OllamaClient(
-            url=self.config.get("url", "http://localhost:11434"),
-            model=self.settings_panel.model_combo.currentText(),
-            messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0.3, "num_predict": 30},
-            timeout=30,
-            stream=False
-        )
-        self._title_client.token_received.connect(self._on_title_token)
-        self._title_client.generation_finished.connect(self._on_title_finished)
-        self._title_client.error_occurred.connect(self._on_title_error)
-        self._title_client.start()
-
-    def _on_title_token(self, token):
-        self._title_buffer += token
-
-    def _on_title_finished(self):
-        title = self._title_buffer.strip().replace('\n', ' ')[:50]
-        title = title.strip('"\'')
-        self._show_save_dialog(title)
-
-    def _on_title_error(self, error_msg):
-        self._set_status(f"⚠ Не удалось сгенерировать название: {error_msg}", "orange")
-        self._show_save_dialog("")
-
-    def _show_save_dialog(self, default_title: str):
-        title, ok = QInputDialog.getText(
-            self, "Сохранить чат", "Название чата:", text=default_title
-        )
-        if ok and title.strip():
-            self._save_chat(title.strip())
-        elif ok:
-            self._set_status("⚠ Сохранение отменено: название не указано", "orange")
-            # Сбрасываем флаг, если пользователь отменил ввод названия
-            self._pending_clear_after_save = False
-
-    def _save_chat(self, title: str):
         try:
-            settings = {
-                "model": self.settings_panel.model_combo.currentText(),
-                "temperature": self.settings_panel.temp_spin.value(),
-                "top_p": self.settings_panel.top_p_spin.value(),
-                "max_tokens": self.settings_panel.max_tokens_spin.value(),
-                "system_prompt": self.settings_panel.sys_prompt.toPlainText(),
-                "timeout": self.settings_panel.timeout_spin.value(),
-                "stream": self.settings_panel.stream_check.isChecked()
-            }
-            
-            chats_dir = self.config.get_chats_dir()
-            exporter = ChatExporter(chats_dir)
-            
-            # Имя папки: используем сгенерированный title, если чат новый
-            folder_name = title if self._current_chat_title == "Без названия" else self._current_chat_title
-            
-            result = exporter.export_chat(
-                chat_folder_name=folder_name,
-                title=title,
-                messages=self.chat_manager.messages,
-                settings=settings,
-                save_json=self.config.get("chat_save_json", True),
-                save_txt=self.config.get("chat_save_txt", True),
-            )
-            
-            saved_files = []
-            if "json" in result: saved_files.append("JSON")
-            if "txt" in result: saved_files.append("TXT")
-            
-            # НЕ размораживаем UI после сохранения — пользователь может продолжить писать
-            # self._chat_locked = False
-            # self.settings_panel.set_mode(self._current_mode, locked=False)
-            
-            display_name = folder_name
-            self._set_status(f"💾 Чат '{display_name}' сохранён ({', '.join(saved_files)})", "green")
-            
-            # Обновляем базовый путь, чтобы система знала, что чат сохранён
-            if "main_json" in result:
-                self._current_chat_base_path = os.path.splitext(result["main_json"])[0]
-                self._current_chat_title = title
-            
-            # Проверяем флаг и очищаем чат, если нужно
-            if self._pending_clear_after_save:
-                self._pending_clear_after_save = False
-                self._clear_chat_internal()
-            
+            if self.chat_versions is not None:
+                new_folder = self.chat_versions.rename_folder(self._chat_folder, new_name)
+                self._chat_folder = new_folder
+                self._current_chat_title = new_name
+                self._set_status(f"✏ Переименовано в «{new_name}»", "green")
         except Exception as e:
-            self._set_status(f"❌ Ошибка сохранения: {e}", "red")
-            # Сбрасываем флаг при ошибке
-            self._pending_clear_after_save = False
+            self._set_status(f"❌ Ошибка переименования: {e}", "red")
 
     def _on_load_chat_requested(self, chat_number: int):
         """Загрузка чата по номеру (переключение между вариантами)"""
