@@ -81,6 +81,7 @@ class OllamaTab(QWidget):
         self.chat_control_panel.undo_last_clicked.connect(self.undo_last_message)
         self.chat_control_panel.attach_file_clicked.connect(self._on_attach_file)
         self.chat_control_panel.export_chat_clicked.connect(self._on_export_chat)
+        self.chat_control_panel.delete_chat_clicked.connect(self._on_delete_chat_clicked)
         
         # Подключение сигналов ветвления из chat_widget
         self.chat_widget.trim_requested.connect(self._on_trim_requested)
@@ -160,6 +161,7 @@ class OllamaTab(QWidget):
             
             self._chat_locked = True
             self.settings_panel.set_mode(self._current_mode, locked=True)
+            self.chat_control_panel.set_delete_enabled(True)
             
             self._update_undo_button_state()
             self._set_status(f"💾 Загружен чат №{self._chat_number} из '{os.path.basename(folder_path)}'", "green")
@@ -212,6 +214,7 @@ class OllamaTab(QWidget):
         self._update_undo_button_state()
         self.update_bar_state("prompt", "")
         self._set_status("Чат очищен", "green")
+        self.chat_control_panel.set_delete_enabled(False)
 
     def handle_prompt(self, text):
         if not text:
@@ -238,6 +241,7 @@ class OllamaTab(QWidget):
                 self._chat_folder = self.chat_versions.create_folder(text)
                 self._chat_number = 1
                 print(f"[DEBUG] Создана папка чата: {self._chat_folder}")
+                self.chat_control_panel.set_delete_enabled(True)
 
         timeout_sec = self.settings_panel.timeout_spin.value()
         self.update_bar_state("progress_total", timeout_sec)
@@ -501,6 +505,31 @@ class OllamaTab(QWidget):
             self.update_bar_state("prompt", last_user_text)
             self._update_undo_button_state()
             self._set_status("Действие отменено, текст возвращён в промпт", "#DAA520")
+
+    def _on_delete_chat_clicked(self):
+        """Удаляет всю папку чата целиком после подтверждения"""
+        if not self._chat_folder:
+            return
+
+        folder_name = os.path.basename(self._chat_folder)
+        reply = QMessageBox.question(
+            self,
+            "Удалить чат",
+            f"Удалить весь диалог «{folder_name}» и все его версии?\nЭто действие необратимо.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.No:
+            return
+
+        try:
+            if self.chat_versions is not None:
+                self.chat_versions.delete_folder(self._chat_folder)
+            self._clear_chat_internal()
+            self._set_status(f"🗑 Диалог «{folder_name}» удалён", "green")
+        except Exception as e:
+            self._set_status(f"❌ Ошибка удаления: {e}", "red")
 
     def _on_attach_file(self):
         self._set_status("📎 Загрузка файлов пока в разработке", "#DAA520")
