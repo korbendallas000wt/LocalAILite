@@ -23,6 +23,7 @@
     │
     ├── core/                                # Ядро (логика без UI)
     │   ├── chat_manager.py                  # История чата (messages list)
+    │   ├── chat_versions.py                # Нумерованные чаты (папки, варианты, навигация)
     │   ├── chat_exporter.py               # Экспорт чатов в JSON/TXT (сохранение, имена файлов)
     │   ├── model_validator.py               # Проверка целостности моделей (HF cache, single-file, Ollama)
     │   ├── package_validator.py             # Проверка пакетов venv (баг #15: numpy race condition)
@@ -127,6 +128,8 @@
 
 - **chat_manager.py** — история чата (messages list)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/chat_manager.py
+- **chat_versions.py** — нумерованные чаты (папки, варианты, навигация)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/chat_versions.py
 - **model_validator.py** — проверка целостности моделей (HF cache, single-file, Ollama)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/model_validator.py
 - **package_validator.py** — проверка пакетов venv (баг #15: numpy race condition)

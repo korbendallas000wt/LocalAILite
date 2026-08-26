@@ -164,13 +164,37 @@ class MarkdownParser:
         out.append('</table>')
         return ''.join(out)
 
-    def render_user_message(self, text):
-        """Сообщение пользователя: смещено вправо (как в LLM-чатах),
-        без подписи, шрифт мельче. Только системная палитра."""
+    def render_user_message(self, text, user_msg_index=-1, branches_count=0, alternatives=None):
+        """Сообщение пользователя: смещено вправо, с кнопками управления и навигацией."""
         colors = self._get_colors()
         escaped = self._escape_html(text)
+        
+        buttons_html = ""
+        if user_msg_index >= 0:
+            buttons = []
+            buttons.append(f'<a href="#trim:{user_msg_index}" style="color:{colors["dim"]};text-decoration:none;font-size:10px;padding:0 4px;opacity:0.7;">🗑 Удалить</a>')
+            buttons.append(f'<a href="#branch:{user_msg_index}" style="color:{colors["dim"]};text-decoration:none;font-size:10px;padding:0 4px;opacity:0.7;">✏ Правка</a>')
+            # Навигация между вариантами (нумерованные чаты)
+            if alternatives:
+                for alt_num in alternatives:
+                    is_current = alt_num == branches_count  # branches_count здесь = текущий номер
+                    style = f'color:{colors["link"]};font-weight:bold;' if is_current else f'color:{colors["dim"]};'
+                    buttons.append(f'<a href="#loadchat:{alt_num}" style="{style}text-decoration:none;font-size:10px;padding:0 4px;">№{alt_num}</a>')
+            
+            buttons_html = (
+                f'<table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 6px 0;">'
+                f'<tr>'
+                f'<td width="30%"></td>'
+                f'<td style="font-size:10px;color:{colors["dim"]};'
+                f'padding:4px 10px;border-top:1px solid {colors["dim"]};">'
+                f'{" &nbsp;|&nbsp; ".join(buttons)}'
+                f'</td>'
+                f'</tr>'
+                f'</table>'
+            )
+            
         return (
-            f'<table width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0;">'
+            f'<table width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 0 0;">'
             f'<tr>'
             f'<td width="30%"></td>'
             f'<td style="background:{colors["alt_base"]};'
@@ -180,6 +204,7 @@ class MarkdownParser:
             f'</td>'
             f'</tr>'
             f'</table>'
+            f'{buttons_html}'
         )
 
     def render_assistant_message(self, markdown_text, msg_index=-1):

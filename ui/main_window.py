@@ -151,14 +151,23 @@ class MainWindow(QMainWindow):
         # Сырые значения (без fallback на дефолты) для корректного детектирования
         old_raw = pm.get_raw_paths(self.config)
 
-        dialog = SettingsDialog(self.config, self.resource_manager, self)
+        dialog = SettingsDialog(self.config, self.resource_manager, self.ollama_manager, self)
         if dialog.exec():
             self._update_status()
             new_raw = pm.get_raw_paths(self.config)
 
             # Проверяем, изменились ли пути (сравниваем сырые значения)
             paths_changed = any(old_raw[k] != new_raw[k] for k in old_raw)
+            
             if not paths_changed:
+                # ФИКС: даже если строки путей не менялись, диск мог быть переподключён.
+                # Проверяем, доступен ли теперь бинарник Ollama, если сервер не запущен.
+                if self.ollama_manager and not self.ollama_manager.is_running():
+                    bin_path = self.ollama_manager._get_ollama_binary()
+                    if bin_path:
+                        if self.ollama_tab:
+                            self.ollama_tab._set_status("Диск подключён, запуск Ollama...", "#DAA520")
+                        self.ollama_manager.start()
                 return
 
             # Проверяем, занят ли ресурс генерацией

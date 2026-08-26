@@ -1,9 +1,14 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTextBrowser, QApplication, QMenu
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 import base64
 from core.markdown_parser import MarkdownParser
 
 class ChatWidget(QWidget):
+    # Сигналы для управления ветвлением
+    trim_requested = pyqtSignal(int)       # user_msg_index
+    branch_requested = pyqtSignal(int)     # user_msg_index
+    load_chat_requested = pyqtSignal(int)      # номер чата для загрузки
+
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
@@ -26,8 +31,8 @@ class ChatWidget(QWidget):
     def set_auto_scroll(self, enabled: bool):
         self.auto_scroll_enabled = enabled
 
-    def append_user_message(self, text):
-        html = self.parser.render_user_message(text)
+    def append_user_message(self, text, user_msg_index=-1, branches_count=0, alternatives=None):
+        html = self.parser.render_user_message(text, user_msg_index, branches_count, alternatives)
         self._history_html.append(("user", html))
         self._rerender()
 
@@ -38,8 +43,9 @@ class ChatWidget(QWidget):
         self._message_responses.append(markdown_text)
 
         html = self.parser.render_assistant_message(markdown_text, msg_index)
-        if stats_dict and (stats_dict.get('completion_tokens', 0) > 0 or stats_dict.get('duration_sec', 0) > 0):
-            html += self.parser.render_stats(stats_dict, markdown_text, msg_index)
+        # Всегда рендерим блок статистики/копирования, даже если stats пустой или нулевой.
+        # Это гарантирует наличие кнопки "📋 копия" для загруженных чатов.
+        html += self.parser.render_stats(stats_dict or {}, markdown_text, msg_index)
 
         self._history_html.append(("assistant", html))
         self._rerender()
@@ -49,12 +55,17 @@ class ChatWidget(QWidget):
         self._history_html = []
         self._message_responses = []
 
-    def load_chat(self, messages: list):
+    def load_chat(self, messages: list, branches_dict=None, alternatives_func=None, current_chat_number=None):
         """Очищает чат и загружает историю из списка сообщений"""
         self.clear_chat()
+        if branches_dict is None:
+            branches_dict = {}
         for msg in messages:
             if msg["role"] == "user":
-                self.append_user_message(msg["content"])
+                user_idx = msg.get("user_msg_index", -1)
+                branches_count = current_chat_number if current_chat_number else 0
+                alternatives = alternatives_func(user_idx) if alternatives_func else None
+                self.append_user_message(msg["content"], user_idx, branches_count, alternatives)
             elif msg["role"] == "assistant":
                 self.append_assistant_message(msg["content"], msg.get("stats"))
 
@@ -106,6 +117,24 @@ class ChatWidget(QWidget):
                 code_text = base64.b64decode(encoded).decode('utf-8')
                 QApplication.clipboard().setText(code_text)
             except Exception:
+                pass
+        elif anchor.startswith('#trim:'):
+            try:
+                user_idx = int(anchor.split(':')[1])
+                self.trim_requested.emit(user_idx)
+            except ValueError:
+                pass
+        elif anchor.startswith('#branch:'):
+            try:
+                user_idx = int(anchor.split(':')[1])
+                self.branch_requested.emit(user_idx)
+            except ValueError:
+                pass
+        elif anchor.startswith('#loadchat:'):
+            try:
+                chat_num = int(anchor.split(':')[1])
+                self.load_chat_requested.emit(chat_num)
+            except ValueError:
                 pass
         
         QTimer.singleShot(0, lambda: sb.setValue(scroll_pos))

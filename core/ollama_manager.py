@@ -25,16 +25,22 @@ class OllamaManager(QObject):
 
     def start(self):
         """Запускает Ollama-сервер"""
+        print(f"[OllamaManager] start() вызван в {time.strftime('%H:%M:%S')}")
         if self._is_port_busy():
+            print(f"[OllamaManager] Порт занят")
             self.conflict_detected.emit()
             return
 
         ollama_bin = self._get_ollama_binary()
+        print(f"[OllamaManager] Бинарник: {ollama_bin}")
         if not ollama_bin:
+            print(f"[OllamaManager] Бинарник не найден")
             self.needs_install.emit()
             return
 
+        print(f"[OllamaManager] Запускаем процесс...")
         self._start_process(ollama_bin)
+        print(f"[OllamaManager] start() завершился в {time.strftime('%H:%M:%S')}")
 
     def use_existing(self):
         """Использует существующий Ollama-сервер (не наш процесс)"""
@@ -221,18 +227,32 @@ class OllamaManager(QObject):
             return False
 
     def _wait_ready(self, timeout=30):
-        """Ждёт, пока Ollama станет доступен"""
-        start = time.time()
-        while time.time() - start < timeout:
-            if self._is_port_busy():
-                if self.process:
-                    pid = self.process.processId()
-                    try:
-                        with open(self._pid_path, "w") as f:
-                            f.write(str(pid))
-                    except Exception:
-                        pass
-                self.started.emit()
-                return
-            time.sleep(0.5)
-        self.error.emit("Ollama не запустился за 30 секунд")
+        """Ждёт, пока Ollama станет доступен (асинхронно через QTimer)"""
+        from PyQt6.QtCore import QTimer
+        self._wait_start = time.time()
+        self._wait_timeout = timeout
+        self._wait_timer = QTimer()
+        self._wait_timer.setSingleShot(False)
+        self._wait_timer.timeout.connect(self._check_ready)
+        self._wait_timer.start(500)  # Проверяем каждые 500мс
+
+    def _check_ready(self):
+        """Проверяет готовность Ollama (вызывается QTimer)"""
+        if self._is_port_busy():
+            self._wait_timer.stop()
+            if self.process:
+                pid = self.process.processId()
+                try:
+                    with open(self._pid_path, "w") as f:
+                        f.write(str(pid))
+                except Exception:
+                    pass
+            self.started.emit()
+            return
+        
+        # Проверяем таймаут
+        if time.time() - self._wait_start > self._wait_timeout:
+            self._wait_timer.stop()
+            # Не показываем ошибку — процесс может ещё запускаться
+            # Просто не эмитим started, UI покажет "Ollama остановлен"
+            print(f"[OllamaManager] Таймаут {self._wait_timeout}с, но процесс может ещё работать")

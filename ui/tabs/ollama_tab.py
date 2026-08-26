@@ -4,6 +4,7 @@ from ui.chat_control_panel import ChatControlPanel
 from ui.settings_panel import SettingsPanel
 from core.chat_manager import ChatManager
 from core.chat_exporter import ChatExporter
+from core.chat_versions import ChatVersions
 from core.ollama_client import OllamaClient
 from PyQt6.QtCore import pyqtSignal, QTimer
 import time
@@ -30,6 +31,14 @@ class OllamaTab(QWidget):
         self._chat_locked = False
         self._current_mode = "new"
         self._pending_clear_after_save = False  # Флаг для очистки после сохранения
+        self._current_chat_base_path = None     # Путь к загруженному файлу (без расширения)
+        self._current_chat_title = "Без названия"
+        self.chat_versions = None              # Модуль нумерованных чатов (создаётся при первом сообщении)
+        self._chat_folder = None               # Путь к папке текущего чата (None = папка ещё не создана)
+        self._chat_number = 0                  # Номер текущего чата в папке
+        self._is_editing = False                   # Режим правки: кнопка «Изменить» нажата, ждём отправки
+        self._edit_backup = None                   # Сохранённый хвост для отмены правки
+        self._pending_sync_variants = None         # {fork_index, old_variants} — для синхронизации после сохранения
 
         self._progress_timer = QTimer()
         self._progress_timer.setInterval(1000)
@@ -72,6 +81,11 @@ class OllamaTab(QWidget):
         self.chat_control_panel.undo_last_clicked.connect(self.undo_last_message)
         self.chat_control_panel.attach_file_clicked.connect(self._on_attach_file)
         self.chat_control_panel.export_chat_clicked.connect(self._on_export_chat)
+        
+        # Подключение сигналов ветвления из chat_widget
+        self.chat_widget.trim_requested.connect(self._on_trim_requested)
+        self.chat_widget.branch_requested.connect(self._on_branch_requested)
+        self.chat_widget.load_chat_requested.connect(self._on_load_chat_requested)
 
     def _on_timeout_changed(self, value):
         self.state_changed.emit(self._bar_state.copy())
@@ -112,33 +126,54 @@ class OllamaTab(QWidget):
         elif mode == "edit":
             self._set_status("Режим: Выберите чат для редактирования", "#DAA520")
 
-    def _on_chat_selected(self, file_path: str):
-        """Загрузка чата из JSON"""
-        if not os.path.exists(file_path):
-            self._set_status("⚠ Файл чата не найден", "red")
+    def _on_chat_selected(self, folder_path: str):
+        """Загрузка чата из папки (новая модель: нумерованные чаты)"""
+        print(f"[DEBUG] _on_chat_selected: папка {folder_path}, mode='{self._current_mode}'")
+        if not os.path.isdir(folder_path):
+            self._set_status("⚠ Папка чата не найдена", "red")
             return
         
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                chat_data = json.load(f)
+            if self.chat_versions is None:
+                self.chat_versions = ChatVersions(self.config.get_chats_dir())
+            
+            chat_data = self.chat_versions.load_last(folder_path)
+            if chat_data is None:
+                self._set_status("⚠ В папке нет чатов", "orange")
+                return
             
             self.chat_manager.load_messages(chat_data.get("messages", []))
-            self.chat_widget.load_chat(chat_data.get("messages", []))
+            
+            # Запоминаем папку и номер ДО перерисовки (нужно для навигации по номерам)
+            self._chat_folder = folder_path
+            self._chat_number = chat_data.get("number", 1)
+            self._current_chat_title = os.path.basename(folder_path)
+            self._current_chat_base_path = folder_path
             
             if "settings" in chat_data:
                 self.settings_panel.apply_settings_from_chat(chat_data["settings"])
+            
+            self._reload_chat_view()
+            
+            # Старая логика веток в новой модели не используется
+            print(f"[DEBUG] _on_chat_selected: папка='{self._chat_folder}', чат №{self._chat_number}")
             
             self._chat_locked = True
             self.settings_panel.set_mode(self._current_mode, locked=True)
             
             self._update_undo_button_state()
-            self._set_status(f"💾 Чат загружен: {os.path.basename(file_path)}", "green")
+            self._set_status(f"💾 Загружен чат №{self._chat_number} из '{os.path.basename(folder_path)}'", "green")
             
         except Exception as e:
             self._set_status(f"❌ Ошибка загрузки чата: {e}", "red")
 
     def _on_new_chat_clicked(self):
         """Кнопка '+ Новый чат' с защитным вопросом"""
+        # Если чат уже сохранён (есть base_path), просто очищаем его без лишних вопросов
+        if self._current_chat_base_path and len(self.chat_manager.messages) > 0:
+            self._clear_chat_internal()
+            return
+            
         if len(self.chat_manager.messages) > 0:
             reply = QMessageBox.question(
                 self,
@@ -166,6 +201,13 @@ class OllamaTab(QWidget):
         self.settings_panel.chat_file_edit.clear()
         self._chat_locked = False
         self._current_mode = "new"
+        self._current_chat_base_path = None
+        self._current_chat_title = "Без названия"
+        self._chat_folder = None
+        self._chat_number = 0
+        self._is_editing = False
+        self._edit_backup = None
+        self._pending_sync_variants = None
         self.settings_panel.set_mode("new", locked=False)
         self._update_undo_button_state()
         self.update_bar_state("prompt", "")
@@ -189,6 +231,13 @@ class OllamaTab(QWidget):
         if not self._chat_locked:
             self._chat_locked = True
             self.settings_panel.set_mode(self._current_mode, locked=True)
+            # Новая модель: при первом сообщении создаём папку чата
+            if self._chat_folder is None:
+                if self.chat_versions is None:
+                    self.chat_versions = ChatVersions(self.config.get_chats_dir())
+                self._chat_folder = self.chat_versions.create_folder(text)
+                self._chat_number = 1
+                print(f"[DEBUG] Создана папка чата: {self._chat_folder}")
 
         timeout_sec = self.settings_panel.timeout_spin.value()
         self.update_bar_state("progress_total", timeout_sec)
@@ -197,8 +246,33 @@ class OllamaTab(QWidget):
         self._progress_timer.start()
         self._set_status("Обработка промпта...", "#DAA520")
 
-        self.chat_manager.add_user_message(text)
-        self.chat_widget.append_user_message(text)
+        # Режим правки: создаём новый номер чата
+        if self._is_editing:
+            old_number = self._chat_number
+            print(f"[DEBUG] Режим правки: создаём чат №{old_number + 1}")
+            self._chat_number = self.chat_versions.next_number(self._chat_folder)
+            self._is_editing = False
+            self._edit_backup = None
+            self.chat_manager.add_user_message(text)
+            # Новое сообщение переиспользует индекс отредактированного — это и есть точка ветвления
+            fork_index = self.chat_manager.messages[-1].get("user_msg_index", -1)
+            if fork_index >= 0 and self.chat_versions is not None and self._chat_folder is not None:
+                # Кто уже есть в этой точке: читаем из сохранённого исходного чата
+                old_variants = self.chat_versions.get_message_variants(self._chat_folder, old_number, fork_index)
+                if not old_variants:
+                    old_variants = [old_number]
+                new_variants = list(old_variants) + [self._chat_number]
+                # Ставим варианты новому сообщению в памяти
+                self.chat_manager.set_variants_for(fork_index, new_variants)
+                # Запоминаем, кого синхронизировать после сохранения
+                self._pending_sync_variants = {"fork_index": fork_index, "old_variants": old_variants}
+        else:
+            self.chat_manager.add_user_message(text)
+        
+        # Получаем индекс нового сообщения и количество веток для него (диск + кэш)
+        user_msg_index = self.chat_manager.messages[-1].get("user_msg_index", -1)
+        branches_count = self._chat_number
+        self.chat_widget.append_user_message(text, user_msg_index, branches_count)
 
         self._current_response_text = ""
         self.last_stats = None
@@ -235,6 +309,97 @@ class OllamaTab(QWidget):
         self.client.start()
         self.update_bar_state("prompt", "")
 
+    def _on_trim_requested(self, user_msg_index: int):
+        """Обрезает чат до указанного сообщения пользователя (включительно)"""
+        # Находим индекс этого сообщения в списке
+        target_idx = -1
+        for i, msg in enumerate(self.chat_manager.messages):
+            if msg.get("role") == "user" and msg.get("user_msg_index") == user_msg_index:
+                target_idx = i
+                break
+        
+        if target_idx != -1:
+            # Удаляем ВСЁ начиная с указанного user-сообщения (включительно)
+            self.chat_manager.messages = self.chat_manager.messages[:target_idx]
+            self._reload_chat_view()
+            self._set_status("🗑 Удалено", "green")
+
+    def _on_branch_requested(self, user_msg_index: int):
+        """Изменить: входит в режим правки, сохраняет хвост, обрезает чат, возвращает текст в промпт"""
+        # Находим позицию сообщения
+        target_idx = -1
+        msg_text = ""
+        for i, msg in enumerate(self.chat_manager.messages):
+            if msg.get("role") == "user" and msg.get("user_msg_index") == user_msg_index:
+                target_idx = i
+                msg_text = msg.get("content", "")
+                break
+        
+        if target_idx == -1:
+            return
+        
+        # Сохраняем хвост (сообщение N и всё после) для отмены
+        self._edit_backup = [m.copy() for m in self.chat_manager.messages[target_idx:]]
+        self._is_editing = True
+        
+        # Обрезаем чат до N (не включая N)
+        self.chat_manager.messages = self.chat_manager.messages[:target_idx]
+        # Новое сообщение переиспользует индекс отредактированного
+        self.chat_manager.set_next_index(user_msg_index)
+        self._reload_chat_view()
+        
+        # Возвращаем текст в промпт
+        if msg_text:
+            self.update_bar_state("prompt", msg_text)
+        self._set_status("✏ Режим правки: отредактируйте промпт и отправьте (или ↶ для отмены)", "#DAA520")
+
+    def _reload_chat_view(self):
+        """Перерисовывает чат на основе текущих сообщений в chat_manager"""
+        self.chat_widget.clear_chat()
+        # Функция навигации: берём готовые варианты прямо из сообщения
+        def find_alts(user_idx):
+            for msg in self.chat_manager.messages:
+                if msg.get("role") == "user" and msg.get("user_msg_index") == user_idx:
+                    variants = msg.get("variants", [])
+                    if len(variants) > 1:
+                        return variants
+                    return None
+            return None
+        self.chat_widget.load_chat(self.chat_manager.messages, alternatives_func=find_alts, current_chat_number=self._chat_number)
+        self._update_undo_button_state()
+
+    def _autosave_current(self):
+        """Сохраняет текущий чат в его папку под текущим номером (новая модель)."""
+        if self.chat_versions is None or self._chat_folder is None:
+            return
+        try:
+            self.chat_versions.save(self._chat_folder, self._chat_number,
+                                    self.chat_manager.messages, self._current_settings())
+            self.chat_versions.set_last_number(self._chat_folder, self._chat_number)
+            # Синхронизация вариантов после ветвления
+            if self._pending_sync_variants:
+                fork_index = self._pending_sync_variants["fork_index"]
+                old_variants = self._pending_sync_variants["old_variants"]
+                new_variants = self.chat_versions.sync_variants_on_branch(
+                    self._chat_folder, fork_index, old_variants, self._chat_number
+                )
+                print(f"[DEBUG] Синхронизация вариантов: узел {fork_index}, новые варианты {new_variants}")
+                self._pending_sync_variants = None
+        except Exception as e:
+            print(f"[DEBUG] Ошибка автосохранения: {e}")
+
+    def _current_settings(self) -> dict:
+        """Снимок текущих настроек чата (для веток и сохранения)."""
+        return {
+            "model": self.settings_panel.model_combo.currentText(),
+            "temperature": self.settings_panel.temp_spin.value(),
+            "top_p": self.settings_panel.top_p_spin.value(),
+            "max_tokens": self.settings_panel.max_tokens_spin.value(),
+            "system_prompt": self.settings_panel.sys_prompt.toPlainText(),
+            "timeout": self.settings_panel.timeout_spin.value(),
+            "stream": self.settings_panel.stream_check.isChecked()
+        }
+
     def on_token(self, token):
         self._current_response_text += token
         now = time.time()
@@ -257,11 +422,16 @@ class OllamaTab(QWidget):
         timeout_sec = self.settings_panel.timeout_spin.value()
         self.update_bar_state("progress_total", timeout_sec)
 
-        self.chat_manager.add_assistant_message(self._current_response_text)
+        self.chat_manager.add_assistant_message(self._current_response_text, self.last_stats)
         self.settings_panel.save_settings()
 
         self.chat_widget.append_assistant_message(self._current_response_text, self.last_stats)
         self._update_undo_button_state()
+        # Если было ветвление — перерисовать чат для показа новых кнопок навигации
+        was_branching = self._pending_sync_variants is not None
+        self._autosave_current()
+        if was_branching:
+            self._reload_chat_view()
 
         self.resource_manager.release_resource()
         self.update_bar_state("is_running", False)
@@ -308,6 +478,18 @@ class OllamaTab(QWidget):
         self._clear_chat_internal()
 
     def undo_last_message(self):
+        # Если в режиме правки — отменяем правку (возвращаем хвост)
+        if self._is_editing and self._edit_backup:
+            self.chat_manager.messages.extend(self._edit_backup)
+            self.chat_manager.recalc_counter()
+            self._reload_chat_view()
+            self.update_bar_state("prompt", "")
+            self._is_editing = False
+            self._edit_backup = None
+            self._set_status("↶ Правка отменена, возвращён исходный чат", "green")
+            return
+        
+        # Старая логика: удалить последнее сообщение
         if self._bar_state.get("is_running", False):
             self.stop_generation()
             self._current_response_text = ""
@@ -324,10 +506,23 @@ class OllamaTab(QWidget):
         self._set_status("📎 Загрузка файлов пока в разработке", "#DAA520")
 
     def _on_export_chat(self):
+        print(f"[DEBUG] _on_export_chat: mode='{self._current_mode}', base_path='{self._current_chat_base_path}', title='{self._current_chat_title}'")
         if not self.chat_manager.messages:
             self._set_status("⚠ Нечего сохранять — чат пуст", "orange")
             return
         
+        # Логика сохранения в зависимости от режима и наличия исходного файла
+        if self._current_mode == "resume" and self._current_chat_base_path:
+            # Режим "Продолжить": обновляем main.json
+            self._save_chat(self._current_chat_title)
+            return
+        
+        if self._current_mode == "edit" and self._current_chat_base_path:
+            # Режим "Изменить": сохраняем чат (без создания ветки)
+            self._save_chat(self._current_chat_title)
+            return
+        
+        # Стандартное поведение для нового чата или если путь неизвестен
         if self.config.get("chat_auto_title", True):
             self._set_status("🤖 Генерация названия...", "#DAA520")
             self._generate_title_async()
@@ -400,22 +595,33 @@ class OllamaTab(QWidget):
             chats_dir = self.config.get_chats_dir()
             exporter = ChatExporter(chats_dir)
             
+            # Имя папки: используем сгенерированный title, если чат новый
+            folder_name = title if self._current_chat_title == "Без названия" else self._current_chat_title
+            
             result = exporter.export_chat(
+                chat_folder_name=folder_name,
                 title=title,
                 messages=self.chat_manager.messages,
                 settings=settings,
                 save_json=self.config.get("chat_save_json", True),
-                save_txt=self.config.get("chat_save_txt", True)
+                save_txt=self.config.get("chat_save_txt", True),
             )
             
             saved_files = []
             if "json" in result: saved_files.append("JSON")
             if "txt" in result: saved_files.append("TXT")
             
-            self._chat_locked = False
-            self.settings_panel.set_mode(self._current_mode, locked=False)
+            # НЕ размораживаем UI после сохранения — пользователь может продолжить писать
+            # self._chat_locked = False
+            # self.settings_panel.set_mode(self._current_mode, locked=False)
             
-            self._set_status(f"💾 Чат '{title}' сохранён ({', '.join(saved_files)})", "green")
+            display_name = folder_name
+            self._set_status(f"💾 Чат '{display_name}' сохранён ({', '.join(saved_files)})", "green")
+            
+            # Обновляем базовый путь, чтобы система знала, что чат сохранён
+            if "main_json" in result:
+                self._current_chat_base_path = os.path.splitext(result["main_json"])[0]
+                self._current_chat_title = title
             
             # Проверяем флаг и очищаем чат, если нужно
             if self._pending_clear_after_save:
@@ -426,6 +632,22 @@ class OllamaTab(QWidget):
             self._set_status(f"❌ Ошибка сохранения: {e}", "red")
             # Сбрасываем флаг при ошибке
             self._pending_clear_after_save = False
+
+    def _on_load_chat_requested(self, chat_number: int):
+        """Загрузка чата по номеру (переключение между вариантами)"""
+        if self.chat_versions is None or self._chat_folder is None:
+            return
+        data = self.chat_versions.load(self._chat_folder, chat_number)
+        if data is None:
+            self._set_status(f"⚠ Чат №{chat_number} не найден", "red")
+            return
+        self.chat_manager.load_messages(data.get("messages", []))
+        if "settings" in data:
+            self.settings_panel.apply_settings_from_chat(data["settings"])
+        self._chat_number = chat_number
+        self.chat_versions.set_last_number(self._chat_folder, chat_number)
+        self._reload_chat_view()
+        self._set_status(f"💾 Загружен чат №{chat_number}", "green")
 
     def unload(self):
         try:
