@@ -31,6 +31,7 @@
 | ui/shared_bottom_bar.py | v1.4.0 | Общая нижняя панель: промпт, прогресс, таймер, RAM/CPU, индикатор ресурса с именем модели (㊘ Генерация Ollama · qwen2.5:3b), единая кнопка действия |
 | ui/cleanup_dialog.py | v1.2.1 | Диалог освобождения ресурсов при закрытии (5 шагов) |
 | ui/chat_widget.py | v1.0.0 | QTextBrowser + стриминг токенов + копирование кода |
+| ui/chat_control_panel.py | v1.6.0 | Панель управления чатом: Новый, Отменить, Файл, Переименовать, Удалить |
 | ui/settings_panel.py | v1.0.0 | Правая панель Ollama (модель, temperature, timeout) |
 | ui/dialogs/settings/update_settings_widget.py | v1.5.0 | Вкладка "Обновления" в настройках: версии, CHANGELOG, прогресс, кнопки |
 
@@ -49,6 +50,7 @@
 | Модуль | Версия | Роль |
 |--------|--------|------|
 | core/chat_manager.py | v1.0.0 | История чата (messages list), экспорт в Markdown |
+| core/chat_versions.py | v1.7.0 | Нумерованные чаты: папки, варианты, навигация, автосохранение |
 | core/ollama_client.py | v1.0.0 | QThread-клиент к Ollama API (/api/chat), стриминг токенов |
 | core/ollama_manager.py | v1.2.0 | Управление ollama serve, проверка RAM, CPU affinity, nice-приоритет |
 | core/diffusers_worker.py | v1.2.0 | QProcess-обёртка для generate_diffusers.py, проверка RAM, CPU limits, history_dir |
@@ -80,6 +82,9 @@
 | installer/detector.py | v1.3.0 | Диагностика железа: ОС, CPU (sse4_2/popcnt/avx/avx2/fma), RAM, GPU, Python, диск. Методы `can_use_pip_pyqt6()`, `detect_system_pyqt6()`. |
 | installer/requirements.py | v1.3.0 | Пороги ресурсов (RAM, CPU, диск) для вердиктов советника. |
 | installer/advisor.py | v1.3.0 | Честные вердикты: что потянет машина (Python/Ollama/SDXL), подбор моделей под железо. |
+| installer/config.json | v1.3.0 | Конфигурация инсталлятора: URL, пути, пакеты. |
+| installer/config_loader.py | v1.3.0 | Загрузка и валидация config.json. |
+| installer/final_check.py | v1.4.0 | Единый модуль глубоких проверок: SDXL env, модели, Ollama. |
 | installer/steps/base.py | v1.3.0 | Контракт идемпотентного шага установки (`InstallStep`, `StepStatus`). |
 | installer/steps/step_config.py | v1.3.0 | Создание служебной структуры `data/` (5 папок: history, init_images, logs, pids, previews). |
 | installer/steps/step_env.py | v1.3.0 | Создание venv с **гибридной стратегией PyQt6**: pip на современном CPU, системный из pacman на старом (без sse4_2/popcnt). |
