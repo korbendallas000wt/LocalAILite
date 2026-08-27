@@ -10,6 +10,7 @@ import time
 import requests
 import json
 import os
+import shutil
 
 
 class OllamaTab(QWidget):
@@ -37,6 +38,7 @@ class OllamaTab(QWidget):
         self._is_editing = False                   # Режим правки: кнопка «Изменить» нажата, ждём отправки
         self._edit_backup = None                   # Сохранённый хвост для отмены правки
         self._pending_sync_variants = None         # {fork_index, old_variants} — для синхронизации после сохранения
+        self._chat_backup_path = None               # Путь к бэкапу папки чата при загрузке
 
         self._progress_timer = QTimer()
         self._progress_timer.setInterval(1000)
@@ -148,6 +150,7 @@ class OllamaTab(QWidget):
             self._chat_number = chat_data.get("number", 1)
             self._current_chat_title = os.path.basename(folder_path)
             self._current_chat_base_path = folder_path
+            self._create_chat_backup()
             
             if "settings" in chat_data:
                 self.settings_panel.apply_settings_from_chat(chat_data["settings"])
@@ -189,14 +192,16 @@ class OllamaTab(QWidget):
             # Автосохранение уже всё записало, просто очищаем
             self._clear_chat_internal()
         else:  # No
-            # Новый чат (создан в этой сессии) — удаляем папку целиком
             if self._current_chat_base_path is None and self._chat_folder:
+                # Новый чат (создан в этой сессии) — удаляем папку целиком
                 try:
                     if self.chat_versions is not None:
                         self.chat_versions.delete_folder(self._chat_folder)
                 except Exception as e:
                     print(f"[DEBUG] Ошибка удаления папки: {e}")
-            # Загруженный чат — пока просто очищаем (откат через бэкап будет позже)
+            elif self._current_chat_base_path is not None:
+                # Загруженный чат — восстанавливаем из бэкапа
+                self._restore_chat_backup()
             self._clear_chat_internal()
 
     def _clear_chat_internal(self):
@@ -217,6 +222,7 @@ class OllamaTab(QWidget):
         self._update_undo_button_state()
         self.update_bar_state("prompt", "")
         self._set_status("Чат очищен", "green")
+        self._cleanup_chat_backup()
         self.chat_control_panel.set_delete_enabled(False)
         self.chat_control_panel.set_rename_enabled(False)
 
@@ -511,6 +517,51 @@ class OllamaTab(QWidget):
             self._update_undo_button_state()
             self._set_status("Действие отменено, текст возвращён в промпт", "#DAA520")
 
+    # ---------- Бэкап папки чата при загрузке ----------
+
+    def _backup_dir(self) -> str:
+        """Путь к папке бэкапов чатов."""
+        chats_dir = self.config.get_chats_dir()
+        return os.path.join(os.path.dirname(chats_dir), 'chats_backup')
+
+    def _create_chat_backup(self):
+        """Создаёт бэкап папки чата при загрузке."""
+        if not self._chat_folder or not os.path.isdir(self._chat_folder):
+            return
+        backup_dir = self._backup_dir()
+        try:
+            if os.path.exists(backup_dir):
+                shutil.rmtree(backup_dir)
+            shutil.copytree(self._chat_folder, backup_dir)
+            self._chat_backup_path = backup_dir
+            print(f"[DEBUG] Создан бэкап чата: {backup_dir}")
+        except Exception as e:
+            print(f"[DEBUG] Ошибка создания бэкапа: {e}")
+            self._chat_backup_path = None
+
+    def _restore_chat_backup(self):
+        """Восстанавливает папку чата из бэкапа (при выборе «Нет»)."""
+        if not self._chat_backup_path or not os.path.isdir(self._chat_backup_path):
+            return
+        try:
+            if self._chat_folder and os.path.isdir(self._chat_folder):
+                shutil.rmtree(self._chat_folder)
+            shutil.copytree(self._chat_backup_path, self._chat_folder)
+            shutil.rmtree(self._chat_backup_path)
+            self._chat_backup_path = None
+            print(f"[DEBUG] Чат восстановлен из бэкапа")
+        except Exception as e:
+            print(f"[DEBUG] Ошибка восстановления из бэкапа: {e}")
+
+    def _cleanup_chat_backup(self):
+        """Удаляет бэкап чата (при выборе «Да» или при закрытии)."""
+        if self._chat_backup_path and os.path.isdir(self._chat_backup_path):
+            try:
+                shutil.rmtree(self._chat_backup_path)
+            except Exception as e:
+                print(f"[DEBUG] Ошибка удаления бэкапа: {e}")
+        self._chat_backup_path = None
+
     def _on_delete_chat_clicked(self):
         """Удаляет всю папку чата целиком после подтверждения"""
         if not self._chat_folder:
@@ -587,6 +638,7 @@ class OllamaTab(QWidget):
         self._set_status(f"💾 Загружен чат №{chat_number}", "green")
 
     def unload(self):
+        self._cleanup_chat_backup()
         try:
             requests.post(f"{self.config.get_ollama_url()}/api/generate",
                          json={"model": self.settings_panel.model_combo.currentText(),
