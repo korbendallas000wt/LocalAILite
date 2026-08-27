@@ -24,7 +24,6 @@
     ├── core/                                # Ядро (логика без UI)
     │   ├── chat_manager.py                  # История чата (messages list)
     │   ├── chat_versions.py                # Нумерованные чаты (папки, варианты, навигация)
-    │   ├── chat_exporter.py               # Экспорт чатов в JSON/TXT (сохранение, имена файлов)
     │   ├── model_validator.py               # Проверка целостности моделей (HF cache, single-file, Ollama)
     │   ├── package_validator.py             # Проверка пакетов venv (баг #15: numpy race condition)
     │   ├── path_validator.py                # Валидация venv, моделей, output, Ollama URL/бинарник/модели
