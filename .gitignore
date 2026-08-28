@@ -40,3 +40,9 @@ WORK/
 
 # Бэкапы (локально, не в git)
 Backup/
+
+# Зеркало ветки main (не коммитится в dev)
+Repo/
+
+# История генерации Diffusers (рабочие данные)
+data/diffusers/history/

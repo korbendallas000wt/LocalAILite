@@ -1,77 +1,59 @@
 """
-Чтение файлов для вставки в промпт (v1.0).
-Поддерживает только UTF-8 текст (txt, md, csv, json, код).
+Чтение файлов для вставки в промпт (v2.0).
+Вложения хранятся как структура, а не как теги в тексте.
 """
 import os
-import re
-from typing import Optional, Tuple
+from typing import Optional, Dict
 
 class FileReader:
-    """Чтение файлов и форматирование для вставки в промпт"""
+    """Чтение файлов и создание структур вложений"""
     
-    FILE_TAG_START = "[Файл: {filename}]"
-    FILE_TAG_END = "[/Файл]"
-    
-    def read_file(self, file_path: str) -> Tuple[Optional[str], Optional[str]]:
-        """Читает файл и возвращает (содержимое, имя_файла).
+    def read_file(self, file_path: str) -> Optional[Dict]:
+        """Читает файл и возвращает структуру вложения.
         
         Returns:
-            Tuple (содержимое, имя_файла) или (None, None) если ошибка
+            Dict с полями:
+                - filename: имя файла
+                - content: содержимое (строка)
+                - source_path: полный путь к исходному файлу
+                - size_bytes: размер в байтах
+            или None если ошибка
         """
         if not os.path.exists(file_path):
-            return None, None
+            return None
         
         filename = os.path.basename(file_path)
         
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            return content, filename
+            
+            return {
+                "filename": filename,
+                "content": content,
+                "source_path": file_path,
+                "size_bytes": os.path.getsize(file_path)
+            }
         except UnicodeDecodeError:
-            return None, None
+            print(f"[FileReader] Файл не UTF-8: {file_path}")
+            return None
         except Exception as e:
             print(f"[FileReader] Ошибка чтения файла {file_path}: {e}")
-            return None, None
-    
-    def format_for_prompt(self, filename: str, content: str) -> str:
-        """Форматирует содержимое файла для вставки в промпт.
-        
-        Args:
-            filename: Имя файла
-            content: Содержимое файла
-            
-        Returns:
-            Отформатированный текст с тегами
-        """
-        return f"{self.FILE_TAG_START.format(filename=filename)}\n{content}\n{self.FILE_TAG_END}"
-    
-    def replace_file_in_text(self, text: str, filename: str, content: str) -> str:
-        """Заменяет существующий блок файла в тексте или добавляет новый.
-        
-        Ищет блок [Файл: имя]...[/Файл] и заменяет. Если не найден — добавляет в начало.
-        
-        Args:
-            text: Исходный текст
-            filename: Имя файла
-            content: Новое содержимое
-            
-        Returns:
-            Текст с обновлённым блоком файла
-        """
-        # Паттерн для поиска блока файла
-        pattern = rf'\[Файл: [^\]]+\]\n.*?\n\[/Файл\]'
-        
-        formatted = self.format_for_prompt(filename, content)
-        
-        # Пробуем заменить существующий блок
-        new_text = re.sub(pattern, formatted, text, count=1, flags=re.DOTALL)
-        
-        # Если замена не сработала — добавляем в начало
-        if new_text == text:
-            new_text = f"{formatted}\n\n{text}"
-        
-        return new_text
+            return None
     
     def get_file_size_tokens(self, content: str) -> int:
         """Оценивает размер файла в токенах (символы / 3)."""
         return len(content) // 3
+    
+    def format_for_prompt(self, attachment: Dict) -> str:
+        """Форматирует вложение для отправки в модель.
+        
+        Args:
+            attachment: структура вложения из read_file()
+            
+        Returns:
+            Текст с тегами для вставки в промпт
+        """
+        filename = attachment["filename"]
+        content = attachment["content"]
+        return f"[Файл: {filename}]\n{content}\n[/Файл]"

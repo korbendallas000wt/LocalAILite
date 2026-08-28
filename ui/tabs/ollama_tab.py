@@ -28,6 +28,7 @@ class OllamaTab(QWidget):
         self.model_info = OllamaModelInfo()
         self.context_tracker = ContextTracker()
         self.file_reader = FileReader()
+        self._pending_attachment = None  # Вложение, ждущее отправки (обычный режим)
         self.client = None
         self._current_response_text = ""
         self.last_stats = None
@@ -97,6 +98,8 @@ class OllamaTab(QWidget):
         self.chat_widget.trim_requested.connect(self._on_trim_requested)
         self.chat_widget.branch_requested.connect(self._on_branch_requested)
         self.chat_widget.load_chat_requested.connect(self._on_load_chat_requested)
+        self.chat_widget.open_file_requested.connect(self._on_open_file)
+        self.chat_widget.remove_file_requested.connect(self._on_remove_file)
 
         # Первоначальный подсчёт контекста
         self._update_context_usage()
@@ -138,10 +141,15 @@ class OllamaTab(QWidget):
         if context_limit is None:
             context_limit = 4096
 
-        # Использованные токены: системный промпт + история
+        # Использованные токены: системный промпт + история + ожидающее вложение
         sys_prompt = self.settings_panel.sys_prompt.toPlainText()
         messages = self.chat_manager.get_messages()
         used_tokens = self.context_tracker.calculate_usage(messages, sys_prompt)
+        
+        # Ожидающее вложение (прикреплено, но ещё не отправлено)
+        if self._pending_attachment:
+            att_content = self._pending_attachment.get("content", "")
+            used_tokens += self.context_tracker.estimate_tokens(att_content)
 
         self.update_bar_state("progress_current", used_tokens)
         self.update_bar_state("progress_total", context_limit)
@@ -303,7 +311,11 @@ class OllamaTab(QWidget):
             self._chat_number = self.chat_versions.next_number(self._chat_folder)
             self._is_editing = False
             self._edit_backup = None
-            self.chat_manager.add_user_message(text)
+            attachments = None
+            if self._pending_attachment:
+                attachments = [self._pending_attachment]
+                self._pending_attachment = None
+            self.chat_manager.add_user_message(text, attachments=attachments)
             # Новое сообщение переиспользует индекс отредактированного — это и есть точка ветвления
             fork_index = self.chat_manager.messages[-1].get("user_msg_index", -1)
             if fork_index >= 0 and self.chat_versions is not None and self._chat_folder is not None:
@@ -317,12 +329,16 @@ class OllamaTab(QWidget):
                 # Запоминаем, кого синхронизировать после сохранения
                 self._pending_sync_variants = {"fork_index": fork_index, "old_variants": old_variants}
         else:
-            self.chat_manager.add_user_message(text)
+            attachments = None
+            if self._pending_attachment:
+                attachments = [self._pending_attachment]
+                self._pending_attachment = None
+            self.chat_manager.add_user_message(text, attachments=attachments)
         
         # Получаем индекс нового сообщения и количество веток для него (диск + кэш)
         user_msg_index = self.chat_manager.messages[-1].get("user_msg_index", -1)
         branches_count = self._chat_number
-        self.chat_widget.append_user_message(text, user_msg_index, branches_count)
+        self.chat_widget.append_user_message(text, user_msg_index, branches_count, attachments=attachments)
         
         # Обновляем счётчик контекста (добавилось сообщение пользователя)
         self._update_context_usage()
@@ -337,7 +353,7 @@ class OllamaTab(QWidget):
         messages = []
         if sys_prompt:
             messages.append({"role": "system", "content": sys_prompt})
-        messages.extend(self.chat_manager.get_messages())
+        messages.extend(self._get_messages_for_model())
 
         options = {
             "temperature": self.settings_panel.temp_spin.value(),
@@ -626,7 +642,7 @@ class OllamaTab(QWidget):
             self._set_status(f"❌ Ошибка удаления: {e}", "red")
 
     def _on_attach_file(self):
-        """Загрузка файла и вставка в промпт или текущее сообщение (режим правки)"""
+        """Загрузка файла: создаёт вложение (обычный режим) или впекает его в редактируемое сообщение."""
         # Выбор файла
         file_path, _ = QFileDialog.getOpenFileName(
             self,
@@ -638,19 +654,20 @@ class OllamaTab(QWidget):
         if not file_path:
             return
         
-        # Чтение файла
-        content, filename = self.file_reader.read_file(file_path)
-        if content is None:
+        # Чтение файла как структуры вложения
+        attachment = self.file_reader.read_file(file_path)
+        if attachment is None:
             self._set_status("⚠ Не удалось прочитать файл (не UTF-8 или ошибка)", "red")
             return
         
+        filename = attachment["filename"]
+        
         # Проверка размера
-        file_tokens = self.file_reader.get_file_size_tokens(content)
+        file_tokens = self.file_reader.get_file_size_tokens(attachment["content"])
         url = self.config.get("url", "http://localhost:11434")
         model_name = self.settings_panel.model_combo.currentText()
         context_limit = self.model_info.get_context_length(url, model_name) or 4096
         
-        # Текущее использование контекста
         sys_prompt = self.settings_panel.sys_prompt.toPlainText()
         messages = self.chat_manager.get_messages()
         current_tokens = self.context_tracker.calculate_usage(messages, sys_prompt)
@@ -664,18 +681,12 @@ class OllamaTab(QWidget):
             )
             return
         
-        # Режим правки: вставить файл в текущее сообщение, вернуть хвост, без ветвления
+        # Режим правки: впекаем вложение в редактируемое сообщение, возвращаем хвост, без ветвления
         if self._is_editing and self._edit_backup:
-            # Берём текущий промпт (это отредактированное сообщение)
-            current_prompt = self.get_bar_state().get("prompt", "")
+            # Одно вложение на сообщение: заменяем предыдущее (если было)
+            self._edit_backup[0]["attachments"] = [attachment]
             
-            # Заменяем или добавляем блок файла
-            new_text = self.file_reader.replace_file_in_text(current_prompt, filename, content)
-            
-            # Обновляем сообщение в бэкапе ДО возврата хвоста
-            self._edit_backup[0]["content"] = new_text
-            
-            # Возвращаем хвост (как в undo_last_message при отмене правки)
+            # Возвращаем хвост
             self.chat_manager.messages.extend(self._edit_backup)
             self.chat_manager.recalc_counter()
             
@@ -683,10 +694,10 @@ class OllamaTab(QWidget):
             self._is_editing = False
             self._edit_backup = None
             
-            # Сохраняем изменения на диск
+            # Сохраняем на диск
             self._autosave_current()
             
-            # Перерисовываем чат
+            # Перерисовываем чат — карточка файла видна в сообщении
             self._reload_chat_view()
             self.update_bar_state("prompt", "")
             self._update_context_usage()
@@ -694,20 +705,107 @@ class OllamaTab(QWidget):
             self._set_status(f"📎 Файл «{filename}» добавлен в сообщение", "green")
             return
         
-        # Обычный режим: вставить файл в начало промпта
-        formatted = self.file_reader.format_for_prompt(filename, content)
-        current_prompt = self.get_bar_state().get("prompt", "")
-        
-        # Если промпт пустой — просто вставляем файл
-        # Если есть текст — добавляем файл сверху
-        if current_prompt:
-            new_prompt = f"{formatted}\n\n{current_prompt}"
-        else:
-            new_prompt = formatted
-        
-        self.update_bar_state("prompt", new_prompt)
+        # Обычный режим: сохраняем вложение, отправится вместе со следующим сообщением
+        self._pending_attachment = attachment
         self._update_context_usage()
-        self._set_status(f"📎 Файл «{filename}» добавлен в промпт", "green")
+        self._set_status(f"📎 Файл «{filename}» прикреплён, ждёт отправки", "green")
+
+    def _on_open_file(self, user_msg_index, file_idx):
+        """Открытие вложения: пробуем системно, если файла нет — показываем сохранённое содержимое."""
+        if self._generation_start_time is not None:
+            self._set_status("⏳ Дождитесь завершения генерации", "orange")
+            return
+        target_msg = None
+        for msg in self.chat_manager.messages:
+            if msg.get("role") == "user" and msg.get("user_msg_index") == user_msg_index:
+                target_msg = msg
+                break
+        
+        if target_msg is None:
+            return
+        
+        attachments = target_msg.get("attachments", [])
+        if file_idx < 0 or file_idx >= len(attachments):
+            return
+        
+        attachment = attachments[file_idx]
+        source_path = attachment.get("source_path", "")
+        filename = attachment.get("filename", "файл")
+        
+        # Пробуем открыть системно
+        if source_path and os.path.exists(source_path):
+            from PyQt6.QtGui import QDesktopServices
+            from PyQt6.QtCore import QUrl
+            if QDesktopServices.openUrl(QUrl.fromLocalFile(source_path)):
+                return
+        
+        # Файла нет на диске или не удалось открыть — показываем сохранённое содержимое
+        content = attachment.get("content", "")
+        self._show_attachment_content(filename, content)
+    
+    def _show_attachment_content(self, filename, content):
+        """Показывает содержимое вложения в модальном окне."""
+        from PyQt6.QtWidgets import QDialog, QTextEdit
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"📄 {filename}")
+        dialog.resize(700, 500)
+        layout = QVBoxLayout(dialog)
+        
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setPlainText(content)
+        layout.addWidget(text_edit)
+        
+        dialog.exec()
+    
+    def _on_remove_file(self, user_msg_index, file_idx):
+        """Удаление вложения из сообщения."""
+        if self._generation_start_time is not None:
+            self._set_status("⏳ Дождитесь завершения генерации", "orange")
+            return
+        target_msg = None
+        for msg in self.chat_manager.messages:
+            if msg.get("role") == "user" and msg.get("user_msg_index") == user_msg_index:
+                target_msg = msg
+                break
+        
+        if target_msg is None:
+            return
+        
+        attachments = target_msg.get("attachments", [])
+        if file_idx < 0 or file_idx >= len(attachments):
+            return
+        
+        removed = attachments.pop(file_idx)
+        
+        if not attachments:
+            target_msg.pop("attachments", None)
+        
+        self._autosave_current()
+        self._reload_chat_view()
+        self._update_context_usage()
+        
+        self._set_status(f"🗑 Вложение «{removed.get('filename', 'файл')}» удалено", "green")
+
+    def _get_messages_for_model(self):
+        """Возвращает сообщения для отправки модели, впекая вложения в текст."""
+        result = []
+        for msg in self.chat_manager.get_messages():
+            role = msg.get("role", "user")
+            text = msg.get("content", "")
+            attachments = msg.get("attachments", [])
+            
+            if attachments:
+                parts = []
+                for att in attachments:
+                    parts.append(self.file_reader.format_for_prompt(att))
+                if text:
+                    parts.append(text)
+                text = "\n\n".join(parts)
+            
+            result.append({"role": role, "content": text})
+        
+        return result
 
     def _on_rename_chat(self):
         """Переименовывает папку чата"""

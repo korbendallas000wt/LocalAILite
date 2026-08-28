@@ -45,9 +45,15 @@ class ContextTracker:
         if system_prompt:
             total_tokens += self.estimate_tokens(system_prompt)
         
-        # Все сообщения диалога
+        # Все сообщения диалога (текст + вложения)
         for msg in messages:
             content = msg.get("content", "")
             total_tokens += self.estimate_tokens(content)
+            
+            # Вложения в сообщении
+            attachments = msg.get("attachments", [])
+            for att in attachments:
+                att_content = att.get("content", "")
+                total_tokens += self.estimate_tokens(att_content)
         
         return total_tokens
