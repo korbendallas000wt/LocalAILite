@@ -341,7 +341,8 @@ class MainWindow(QMainWindow):
         if "prompt" in state:
             self.shared_bar.set_prompt(state["prompt"])
         if "progress_current" in state and "progress_total" in state:
-            self.shared_bar.set_progress(state["progress_current"], state["progress_total"])
+            colorize = state.get("progress_colorize", False)
+            self.shared_bar.set_progress(state["progress_current"], state["progress_total"], colorize)
         if "status" in state:
             self.shared_bar.set_status(state["status"], state.get("status_color"))
         if "elapsed_seconds" in state:

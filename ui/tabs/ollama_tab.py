@@ -5,6 +5,10 @@ from ui.settings_panel import SettingsPanel
 from core.chat_manager import ChatManager
 from core.chat_versions import ChatVersions
 from core.ollama_client import OllamaClient
+from core.ollama_model_info import OllamaModelInfo
+from core.context_tracker import ContextTracker
+from core.file_reader import FileReader
+from PyQt6.QtWidgets import QFileDialog
 from PyQt6.QtCore import pyqtSignal, QTimer
 import time
 import requests
@@ -21,6 +25,9 @@ class OllamaTab(QWidget):
         self.config = config
         self.resource_manager = resource_manager
         self.chat_manager = ChatManager()
+        self.model_info = OllamaModelInfo()
+        self.context_tracker = ContextTracker()
+        self.file_reader = FileReader()
         self.client = None
         self._current_response_text = ""
         self.last_stats = None
@@ -52,7 +59,8 @@ class OllamaTab(QWidget):
             "status": "Готово",
             "status_color": "green",
             "elapsed_seconds": 0,
-            "is_running": False
+            "is_running": False,
+            "progress_colorize": True
         }
 
         layout = QHBoxLayout(self)
@@ -76,6 +84,8 @@ class OllamaTab(QWidget):
         self.settings_panel.timeout_spin.valueChanged.connect(self._on_timeout_changed)
         self.settings_panel.mode_changed.connect(self._on_mode_changed)
         self.settings_panel.chat_selected.connect(self._on_chat_selected)
+        self.settings_panel.model_combo.currentTextChanged.connect(self._update_context_usage)
+        self.settings_panel.sys_prompt.textChanged.connect(self._update_context_usage)
         
         self.chat_control_panel.new_chat_clicked.connect(self._on_new_chat_clicked)
         self.chat_control_panel.undo_last_clicked.connect(self.undo_last_message)
@@ -87,6 +97,9 @@ class OllamaTab(QWidget):
         self.chat_widget.trim_requested.connect(self._on_trim_requested)
         self.chat_widget.branch_requested.connect(self._on_branch_requested)
         self.chat_widget.load_chat_requested.connect(self._on_load_chat_requested)
+
+        # Первоначальный подсчёт контекста
+        self._update_context_usage()
 
     def _on_timeout_changed(self, value):
         self.state_changed.emit(self._bar_state.copy())
@@ -111,6 +124,27 @@ class OllamaTab(QWidget):
         msgs = self.chat_manager.messages
         can_undo = self._bar_state.get("is_running", False) or len(msgs) > 0
         self.chat_control_panel.set_undo_enabled(can_undo)
+
+    def _update_context_usage(self):
+        """Обновляет счётчик использования контекста в прогрессбаре"""
+        url = self.config.get("url", "http://localhost:11434")
+        model_name = self.settings_panel.model_combo.currentText()
+
+        if not model_name:
+            return
+
+        # Лимит контекста (кэшируется внутри на 5 минут)
+        context_limit = self.model_info.get_context_length(url, model_name)
+        if context_limit is None:
+            context_limit = 4096
+
+        # Использованные токены: системный промпт + история
+        sys_prompt = self.settings_panel.sys_prompt.toPlainText()
+        messages = self.chat_manager.get_messages()
+        used_tokens = self.context_tracker.calculate_usage(messages, sys_prompt)
+
+        self.update_bar_state("progress_current", used_tokens)
+        self.update_bar_state("progress_total", context_limit)
 
     def _on_mode_changed(self, mode: str):
         """Обработка смены режима (только в свободном состоянии)"""
@@ -156,6 +190,9 @@ class OllamaTab(QWidget):
                 self.settings_panel.apply_settings_from_chat(chat_data["settings"])
             
             self._reload_chat_view()
+            
+            # Обновляем счётчик контекста для загруженного чата
+            self._update_context_usage()
             
             # Старая логика веток в новой модели не используется
             print(f"[DEBUG] _on_chat_selected: папка='{self._chat_folder}', чат №{self._chat_number}")
@@ -221,6 +258,7 @@ class OllamaTab(QWidget):
         self.settings_panel.set_mode("new", locked=False)
         self._update_undo_button_state()
         self.update_bar_state("prompt", "")
+        self._update_context_usage()
         self._set_status("Чат очищен", "green")
         self._cleanup_chat_backup()
         self.chat_control_panel.set_delete_enabled(False)
@@ -254,9 +292,6 @@ class OllamaTab(QWidget):
                 self.chat_control_panel.set_delete_enabled(True)
             self.chat_control_panel.set_rename_enabled(True)
 
-        timeout_sec = self.settings_panel.timeout_spin.value()
-        self.update_bar_state("progress_total", timeout_sec)
-        self.update_bar_state("progress_current", 0)
         self._generation_start_time = time.time()
         self._progress_timer.start()
         self._set_status("Обработка промпта...", "#DAA520")
@@ -288,6 +323,9 @@ class OllamaTab(QWidget):
         user_msg_index = self.chat_manager.messages[-1].get("user_msg_index", -1)
         branches_count = self._chat_number
         self.chat_widget.append_user_message(text, user_msg_index, branches_count)
+        
+        # Обновляем счётчик контекста (добавилось сообщение пользователя)
+        self._update_context_usage()
 
         self._current_response_text = ""
         self.last_stats = None
@@ -337,6 +375,7 @@ class OllamaTab(QWidget):
             # Удаляем ВСЁ начиная с указанного user-сообщения (включительно)
             self.chat_manager.messages = self.chat_manager.messages[:target_idx]
             self._reload_chat_view()
+            self._update_context_usage()
             self._set_status("🗑 Удалено", "green")
 
     def _on_branch_requested(self, user_msg_index: int):
@@ -427,20 +466,20 @@ class OllamaTab(QWidget):
     def _update_progress(self):
         if self._generation_start_time:
             elapsed = int(time.time() - self._generation_start_time)
-            self.update_bar_state("progress_current", elapsed)
+            # Обновляем только таймер секунд. Прогрессбар теперь показывает токены.
             self.update_bar_state("elapsed_seconds", elapsed)
 
     def on_finished(self):
         self._progress_timer.stop()
         self._generation_start_time = None
-        self.update_bar_state("progress_current", 0)
-        timeout_sec = self.settings_panel.timeout_spin.value()
-        self.update_bar_state("progress_total", timeout_sec)
 
         self.chat_manager.add_assistant_message(self._current_response_text, self.last_stats)
         self.settings_panel.save_settings()
 
         self.chat_widget.append_assistant_message(self._current_response_text, self.last_stats)
+        
+        # Обновляем счётчик контекста (добавилось сообщение ассистента)
+        self._update_context_usage()
         self._update_undo_button_state()
         # Если было ветвление — перерисовать чат для показа новых кнопок навигации
         was_branching = self._pending_sync_variants is not None
@@ -464,9 +503,6 @@ class OllamaTab(QWidget):
     def on_error(self, error_msg):
         self._progress_timer.stop()
         self._generation_start_time = None
-        self.update_bar_state("progress_current", 0)
-        timeout_sec = self.settings_panel.timeout_spin.value()
-        self.update_bar_state("progress_total", timeout_sec)
 
         self._had_error = True
         self._current_response_text += f"\n\n⚠ Ошибка: {error_msg}"
@@ -501,6 +537,7 @@ class OllamaTab(QWidget):
             self.update_bar_state("prompt", "")
             self._is_editing = False
             self._edit_backup = None
+            self._update_context_usage()
             self._set_status("↶ Правка отменена, возвращён исходный чат", "green")
             return
         
@@ -515,6 +552,7 @@ class OllamaTab(QWidget):
             self.chat_widget.remove_last_message()
             self.update_bar_state("prompt", last_user_text)
             self._update_undo_button_state()
+            self._update_context_usage()
             self._set_status("Действие отменено, текст возвращён в промпт", "#DAA520")
 
     # ---------- Бэкап папки чата при загрузке ----------
@@ -588,7 +626,88 @@ class OllamaTab(QWidget):
             self._set_status(f"❌ Ошибка удаления: {e}", "red")
 
     def _on_attach_file(self):
-        self._set_status("📎 Загрузка файлов пока в разработке", "#DAA520")
+        """Загрузка файла и вставка в промпт или текущее сообщение (режим правки)"""
+        # Выбор файла
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите файл",
+            "",
+            "Текстовые файлы (*.txt *.md *.csv *.json *.py *.js *.html *.css);;Все файлы (*)"
+        )
+        
+        if not file_path:
+            return
+        
+        # Чтение файла
+        content, filename = self.file_reader.read_file(file_path)
+        if content is None:
+            self._set_status("⚠ Не удалось прочитать файл (не UTF-8 или ошибка)", "red")
+            return
+        
+        # Проверка размера
+        file_tokens = self.file_reader.get_file_size_tokens(content)
+        url = self.config.get("url", "http://localhost:11434")
+        model_name = self.settings_panel.model_combo.currentText()
+        context_limit = self.model_info.get_context_length(url, model_name) or 4096
+        
+        # Текущее использование контекста
+        sys_prompt = self.settings_panel.sys_prompt.toPlainText()
+        messages = self.chat_manager.get_messages()
+        current_tokens = self.context_tracker.calculate_usage(messages, sys_prompt)
+        
+        total_tokens = current_tokens + file_tokens
+        if total_tokens > context_limit:
+            self._set_status(
+                f"⚠ Файл слишком большой ({file_tokens} токенов), "
+                f"вместе с историей ({current_tokens}) не влезает в окно ({context_limit})",
+                "red"
+            )
+            return
+        
+        # Режим правки: вставить файл в текущее сообщение, вернуть хвост, без ветвления
+        if self._is_editing and self._edit_backup:
+            # Берём текущий промпт (это отредактированное сообщение)
+            current_prompt = self.get_bar_state().get("prompt", "")
+            
+            # Заменяем или добавляем блок файла
+            new_text = self.file_reader.replace_file_in_text(current_prompt, filename, content)
+            
+            # Обновляем сообщение в бэкапе ДО возврата хвоста
+            self._edit_backup[0]["content"] = new_text
+            
+            # Возвращаем хвост (как в undo_last_message при отмене правки)
+            self.chat_manager.messages.extend(self._edit_backup)
+            self.chat_manager.recalc_counter()
+            
+            # Выходим из режима правки
+            self._is_editing = False
+            self._edit_backup = None
+            
+            # Сохраняем изменения на диск
+            self._autosave_current()
+            
+            # Перерисовываем чат
+            self._reload_chat_view()
+            self.update_bar_state("prompt", "")
+            self._update_context_usage()
+            
+            self._set_status(f"📎 Файл «{filename}» добавлен в сообщение", "green")
+            return
+        
+        # Обычный режим: вставить файл в начало промпта
+        formatted = self.file_reader.format_for_prompt(filename, content)
+        current_prompt = self.get_bar_state().get("prompt", "")
+        
+        # Если промпт пустой — просто вставляем файл
+        # Если есть текст — добавляем файл сверху
+        if current_prompt:
+            new_prompt = f"{formatted}\n\n{current_prompt}"
+        else:
+            new_prompt = formatted
+        
+        self.update_bar_state("prompt", new_prompt)
+        self._update_context_usage()
+        self._set_status(f"📎 Файл «{filename}» добавлен в промпт", "green")
 
     def _on_rename_chat(self):
         """Переименовывает папку чата"""
@@ -635,6 +754,7 @@ class OllamaTab(QWidget):
         self._chat_number = chat_number
         self.chat_versions.set_last_number(self._chat_folder, chat_number)
         self._reload_chat_view()
+        self._update_context_usage()
         self._set_status(f"💾 Загружен чат №{chat_number}", "green")
 
     def unload(self):
