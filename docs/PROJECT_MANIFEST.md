@@ -17,9 +17,10 @@
 | ui/tabs/ollama_tab.py | v1.2.0 | Чат. ChatWidget + SettingsPanel + OllamaClient (QThread), управление историей через ChatManager, acquire/release ресурса. |
 | ui/tabs/diffusers_tab.py | v1.2.1 | Генерация. QGraphicsView для превью, DiffusersSettingsPanel, DiffusersWorker (QProcess), управление чекпоинтами и историей. Исправлена утечка ресурса и гонка при остановке. |
 | ui/tabs/image_prep_tab.py | v1.1.0 | Visual editor. QGraphicsView + галерея + обработка изображений (resize/crop). |
-| ui/shared_bottom_bar.py | v1.4.0 | Общая панель. Поле ввода промпта, прогрессбар, таймер, индикаторы RAM/CPU, индикатор ресурса с именем модели (㊘ Генерация Ollama · qwen2.5:3b), единая кнопка действия (3 состояния). |
+| ui/shared_bottom_bar.py | v1.4.0 | Общая панель. Поле ввода промпта, прогрессбар токенов с подкраской (зелёный/оранжевый/красный), таймер, индикаторы RAM/CPU, индикатор ресурса с именем модели (㊘ Генерация Ollama · qwen2.5:3b), единая кнопка действия (3 состояния). |
 | ui/cleanup_dialog.py | v1.2.1 | Очистка. Диалог освобождения ресурсов при закрытии (5 шагов): остановка Diffusers (включая kill по PID), выгрузка модели Ollama, стоп сервера, очистка памяти. |
-| ui/chat_widget.py | v1.0.0 | Чат-браузер. QTextBrowser с рендерингом Markdown, стриминг токенов, копирование кода по клику, контекстное меню. |
+| ui/chat_widget.py | v1.0.0 | Чат-браузер. QTextBrowser с рендерингом Markdown, стриминг токенов, копирование кода по клику, контекстное меню, карточки вложений с сигналами open/remove. |
+| ui/chat_control_panel.py | v1.0.0 | Панель управления чатом (4 кнопки: Новый, Отменить, Файл, Сохранить). |
 | ui/settings_panel.py | v1.0.0 | Настройки Ollama. Правая панель (модель, temperature, top_p, max_tokens, timeout, stream, system_prompt). |
 | ui/tabs/diffusers_settings_panel.py | v1.0.0 | Настройки Diffusers. Модель, scheduler, steps, cfg, size, seed, negative_prompt, список архивных чекпоинтов. |
 | ui/tabs/image_prep_panel.py | v1.1.0 | Правая панель Visual editor. Пресет разрешения, режим обрезки (center/letterbox/stretch). |
@@ -38,6 +39,9 @@
 |--------|--------|------|
 | core/chat_manager.py | v1.0.0 | История чата (messages list), добавление/получение сообщений, экспорт в Markdown. |
 | core/ollama_client.py | v1.0.0 | QThread-клиент к Ollama API (/api/chat), стриминг токенов, извлечение статистики (tokens/sec, duration). |
+| core/ollama_model_info.py | v1.0.0 | Кэш лимитов контекста моделей из /api/show (TTL 5 мин). Методы: get_context_length, get_model_info. |
+| core/context_tracker.py | v1.0.0 | Трекер контекста: подсчёт токенов в промпте и истории, эмиссия прогресса в SharedBottomBar. |
+| core/file_reader.py | v1.0.0 | Чтение и валидация файлов для вложений (размер, тип, кодировка). |
 | core/ollama_manager.py | v1.2.0 | Управление процессом ollama serve (старт/стоп), проверка порта 11434, обработка конфликтов, логирование, PID-файлы, проверка RAM, CPU affinity, nice-приоритет. |
 | core/diffusers_worker.py | v1.2.0 | QProcess-обёртка для scripts/generate_diffusers.py, парсинг JSON-вывода, логирование, сигналы (step_updated, generation_finished, error_occurred). Проверка RAM, CPU limits, history_dir. Адаптация под diffusers 0.39+ (callback_on_step_end). |
 | core/checkpoint_manager.py | v1.0.0 | Менеджер чекпоинтов генерации. Сохранение latents + scheduler + generator в PT, метаданные в JSON, архивация с timestamp, загрузка из архива. |
@@ -48,7 +52,7 @@
 | core/image_processor.py | v1.1.0 | Обработка изображений: resize, crop (center/letterbox/stretch), нормализация до кратности 8. |
 | core/path_validator.py | v1.1.0 | Валидация путей (venv, модели, output, Ollama URL, бинарник Ollama, модели Ollama), проверка доступности, подсчёт моделей. |
 | core/paths_manager.py | v1.4.0 | Единый модуль управления путями: ключи QSettings, дефолты, размеры, labels, критичность, get_raw_paths/get_effective_paths/set_path, валидация с уровнями (0/1/2), источники моделей из data/model_sources.json. |
-| core/markdown_parser.py | v1.0.0 | Парсер Markdown в HTML с адаптацией под системную тему KDE, подсветка кода, кнопки копирования, обработка ссылок, списков, заголовков. |
+| core/markdown_parser.py | v1.0.0 | Парсер Markdown в HTML с адаптацией под системную тему KDE, подсветка кода, кнопки копирования, обработка ссылок, списков, заголовков, рендер карточек вложений. |
 | core/updater.py | v2.0 | Модуль обновлений: проверка версий, скачивание, установка из ветки main, логирование, graceful shutdown. |
 
 ### Скрипты (scripts/)
@@ -145,6 +149,8 @@
 - generation_finished(str, int) → DiffusersTab._on_generation_finished → финальное изображение
 - error_occurred(str) → DiffusersTab._on_error → статусная строка
 - token_received(str) → OllamaTab.on_token → стриминг в ChatWidget
+- open_file_requested(str) → OllamaTab._on_open_file → системный xdg-open (или модальное окно с ошибкой)
+- remove_file_requested(int) → OllamaTab._on_remove_file → удаление вложения из промпта
 - stats_received(dict) → OllamaTab.on_stats → статистика (tokens/sec, duration)
 - resource_acquired(str) → MainWindow._on_resource_acquired → блокировка кнопки "Запустить"
 - resource_released() → MainWindow._on_resource_released → разблокировка кнопки
@@ -155,6 +161,8 @@
 - CleanupThread работает в QThread (очистка ресурсов при закрытии)
 - ResourceMonitor использует psutil (мониторинг RAM/CPU каждые 2 сек)
 - Межпоточные вызовы UI → только через pyqtSignal
+- Счётчик контекста: изменение промпта/модели/сообщений → ContextTracker → подсчёт токенов → state_changed → прогрессбар в SharedBottomBar
+- Загрузка файла: панель «📎 Файл» → FileReader (валидация размера/кодировки) → карточка в ChatWidget → впекание в промпт при отправке
 
 ### Чекпоинты
 - Сохранение: checkpoint_manager.save_checkpoint(latents, scheduler, generator, params, current_step, remaining_timesteps, actual_seed, last_preview_path)

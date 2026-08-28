@@ -11,7 +11,6 @@
     ├── LocalAILite                          # Исполняемая обёртка для запуска приложения
     ├── LocalAILite.desktop                  # Ярлык для запуска из меню/рабочего стола
     ├── docs/                                # Документация
-    │   ├── START_HERE.md                    # Точка входа для новой модели (общий обзор)
     │   ├── STRUCTURE.md                     # Этот файл (структура + raw-ссылки)
     │   ├── WORKLOG.md                       # Журнал разработки (сессии, баги, коммиты)
     │   ├── CHANGELOG.md                     # История версий (для пользователей)
@@ -32,10 +31,13 @@
     │   ├── diffusers_worker.py              # QProcess-обёртка для generate_diffusers.py
     │   ├── history_manager.py               # Менеджер истории: data/diffusers/history/{timestamp}/
     │   ├── image_processor.py               # Обработка изображений: resize, crop, letterbox, stretch
-    │   ├── markdown_parser.py               # Markdown в HTML (подсветка кода, ссылки, списки)
+    │   ├── markdown_parser.py               # Markdown в HTML (подсветка кода, ссылки, списки, рендер карточек вложений)
     │   ├── models_registry.py               # Реестр моделей v2.0: короткое имя ↔ {path, full_name, type}
     │   ├── ollama_client.py                 # QThread-клиент к Ollama API (/api/chat)
     │   ├── ollama_manager.py                # Управление ollama serve (старт/стоп/конфликты портов)
+    ├── ollama_model_info.py          # Кэш лимитов контекста моделей Ollama (TTL 5 мин, /api/show)
+    ├── context_tracker.py             # Трекер контекста (подсчёт токенов, прогресс в статусбар)
+    ├── file_reader.py                # Чтение и валидация файлов для вложений
     │   ├── resource_manager.py              # Управление ресурсом: acquire/release, 2 арендатора
     │   ├── resource_monitor.py              # Мониторинг RAM/CPU, реальная проверка RAM, лимиты, PID
     │   └── updater.py                     # Модуль обновлений v2.0: проверка + скачивание + установка (QThread + urllib)
@@ -48,7 +50,7 @@
     │
     ├── ui/                                  # PyQt6 интерфейс
     │   ├── main_window.py                   # Главное окно: 3 вкладки, меню, OllamaManager, SharedBottomBar
-    │   ├── chat_widget.py                   # Append-only просмотрщик готовых HTML-блоков + копирование кода
+    │   ├── chat_widget.py                   # Append-only просмотрщик + копирование кода + сигналы вложений (open/remove)
     │   ├── chat_control_panel.py            # Панель управления чатом (4 кнопки: Новый, Отменить, Файл, Сохранить)
     │   ├── cleanup_dialog.py                # Диалог освобождения ресурсов при закрытии (5 шагов)
     │   ├── settings_panel.py                # Правая панель Ollama (модель, temperature, timeout)
@@ -145,7 +147,7 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/history_manager.py
 - **image_processor.py** — обработка изображений: resize, crop, letterbox, stretch
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/image_processor.py
-- **markdown_parser.py** — Markdown в HTML (подсветка кода, ссылки, списки)
+- **markdown_parser.py** — Markdown в HTML (подсветка кода, ссылки, списки, рендер карточек вложений)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/markdown_parser.py
 - **models_registry.py** — реестр моделей v2.0
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/models_registry.py
@@ -153,6 +155,12 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/ollama_client.py
 - **ollama_manager.py** — управление ollama serve (старт/стоп/конфликты портов)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/ollama_manager.py
+- **ollama_model_info.py** — кэш лимитов контекста моделей Ollama (TTL 5 мин, /api/show)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/ollama_model_info.py
+- **context_tracker.py** — трекер контекста (подсчёт токенов, прогресс в статусбар)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/context_tracker.py
+- **file_reader.py** — чтение и валидация файлов для вложений
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/file_reader.py
 - **resource_manager.py** — управление ресурсом: acquire/release, 2 арендатора
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/resource_manager.py
 - **resource_monitor.py** — мониторинг RAM/CPU, лимиты, PID
@@ -207,8 +215,10 @@
 
 - **main_window.py** — главное окно: 3 вкладки, меню, OllamaManager, SharedBottomBar
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/main_window.py
-- **chat_widget.py** — QTextBrowser + стриминг токенов + копирование кода
+- **chat_widget.py** — Append-only просмотрщик + копирование кода + сигналы вложений (open/remove)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/chat_widget.py
+- **chat_control_panel.py** — панель управления чатом (4 кнопки: Новый, Отменить, Файл, Сохранить)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/chat_control_panel.py
 - **cleanup_dialog.py** — диалог освобождения ресурсов при закрытии (5 шагов)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/cleanup_dialog.py
 - **settings_panel.py** — правая панель Ollama (модель, temperature, timeout)
@@ -243,8 +253,6 @@ https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/s
 
 ### docs/ — документация
 
-- **START_HERE.md** — точка входа для новой модели (общий обзор)
-  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/docs/START_HERE.md
 - **STRUCTURE.md** — этот файл (структура + raw-ссылки)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/docs/STRUCTURE.md
 - **WORKLOG.md** — журнал разработки (сессии, баги, коммиты)
@@ -276,8 +284,7 @@ https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/s
 ## Примечание для модели
 
 При вхождении в проект:
-1. Прочитай docs/START_HERE.md (общий обзор, текущее состояние)
-2. Прочитай docs/STRUCTURE.md (этот файл — структура + raw-ссылки)
-3. Если нужен конкретный модуль — попробуй raw-ссылку из раздела "Быстрый доступ"
-4. Если raw-ссылка не работает (сеть/rate limit/404) — попроси Корбена: `cat {путь}`
-5. WORK/HANDOFF.md — локальный файл (не в git), проси Корбена показать при необходимости
+1. Прочитай docs/STRUCTURE.md (этот файл — структура + raw-ссылки)
+2. Если нужен конкретный модуль — попробуй raw-ссылку из раздела "Быстрый доступ"
+3. Если raw-ссылка не работает (сеть/rate limit/404) — попроси Корбена: `cat {путь}`
+4. WORK/HANDOFF.md — локальный файл (не в git), проси Корбена показать при необходимости
