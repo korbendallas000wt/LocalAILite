@@ -59,6 +59,7 @@
     │   │   ├── paths_dialog.py              # Стартовый диалог настройки путей
     │   │   ├── diffusers_models_dialog.py   # Управление моделями (список, удалить, открыть)
     │   │   ├── history_save_dialog.py       # Диалог сохранения истории генерации
+    │   │   ├── folder_dialog.py             # Обёртка над QFileDialog с режимами (navigate/select)
     │   │   └── settings/
     │   │       ├── settings_dialog.py       # Окно настроек (вкладки)
     │   │       ├── paths_settings_widget.py         # Вкладка Общие
@@ -231,6 +232,8 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/diffusers_models_dialog.py
 - **dialogs/history_save_dialog.py** — диалог сохранения истории генерации
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/history_save_dialog.py
+- **dialogs/folder_dialog.py** — обёртка над QFileDialog с режимами (navigate/select)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/folder_dialog.py
 - **dialogs/settings/settings_dialog.py** — окно настроек (вкладки)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/settings/settings_dialog.py
 dialogs/settings/update_settings_widget.py — вкладка Обновления (v2.0)
