@@ -119,10 +119,10 @@ class SettingsPanel(QWidget):
             self.mode_changed.emit("edit")
 
     def _browse_chat(self):
-        from PyQt6.QtWidgets import QFileDialog
+        from ui.dialogs.folder_dialog import FolderDialog
         chats_dir = self.config.get("chats_dir", "data/ollama/chats")
-        folder_path = QFileDialog.getExistingDirectory(
-            self, "Выберите папку чата", chats_dir
+        folder_path = FolderDialog.get_folder(
+            self, chats_dir, "Выберите папку чата", mode="select"
         )
         if folder_path:
             self.chat_file_edit.setText(folder_path)
