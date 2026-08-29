@@ -37,6 +37,34 @@
 
 ---
 
+## 2026-08-30 — Диагностика краша QThread (не устранён, откат)
+
+**Цель сессии**: найти и устранить краш `QThread: Destroyed while thread '' is still running` при закрытии настроек.
+
+**Что сделано**:
+- Проанализирован лог краша
+- Проверены файлы: `core/ollama_manager.py`, `core/ollama_model_info.py`, `ui/main_window.py`, `core/resource_manager.py`, `ui/tabs/diffusers_tab.py`, `ui/tabs/ollama_tab.py`, `core/updater.py`, `ui/dialogs/settings/settings_dialog.py`, `ui/dialogs/settings/update_settings_widget.py`, `core/ollama_client.py`, все виджеты настроек
+- Найдены подозрительные места:
+  - `core/updater.py`: `_VersionCheckWorker(QThread)` с блокирующим `urlopen(timeout=10)`, `shutdown()` ждёт только 3 секунды
+  - `ui/dialogs/settings/paths_settings_widget.py`: `self._ollama_retry_timer = QTimer()` без parent
+- Применены фиксы:
+  - `core/updater.py`: добавлен `_stop_requested` флаг и метод `stop()` в `_VersionCheckWorker`, `shutdown()` вызывает `stop()` перед `wait()`
+  - `ui/dialogs/settings/paths_settings_widget.py`: `QTimer()` заменён на `QTimer(self)`
+- **Результат: краш не устранён**, оба файла откачены
+
+**Выводы для следующей сессии**:
+- Краш происходит сразу после `OllamaManager.start()` завершился, ещё до открытия настроек
+- Значит проблема не в настройках, а в самом старте приложения
+- Нужен другой подход: запустить с отладкой (`gdb`, `faulthandler`, или добавить `print()` в подозрительные места)
+- Подозрительные места для проверки завтра:
+  - `core/ollama_manager.py`: `_wait_ready()` создаёт `_wait_timer = QTimer()` без parent
+  - `ui/main_window.py`: `Updater()` создаётся без parent, `QTimer.singleShot(3000, ...)` для проверки обновлений
+  - `core/resource_monitor.py`: мониторинг RAM/CPU каждые 2 секунды (не проверен)
+  - `ui/shared_bottom_bar.py`: индикаторы RAM/CPU (не проверен)
+
+---
+
+
 ## Сессия 2026-08-29: Выбор папки чата без навигации
 
 ### Проблема
