@@ -11,12 +11,11 @@
 - **Два реестра**: доступные модели (что можно скачать) и установленные (что на диске, уже есть в `models_registry.py`).
 - **Переиспользуем** логику из `installer/steps/step_models.py`, `core/models_registry.py`, `core/model_validator.py`, `installer/advisor.py`.
 
-### Этап 1: Фундамент — реестр доступных моделей (~80-120 строк)
-- Структура `data/shared/registry/available_models.json` (имя, источник, размер, требования к железу, тип: ollama/diffusers)
-- Метод чтения в `core/models_registry.py` (`list_available()` или аналог)
-- Без UI, только данные
-- Проверка: читаем реестр из терминала, видим список
-- Коммит → пуш в dev
+### Этап 1: Фундамент — реестр доступных моделей ✅ ВЫПОЛНЕНО
+Коммиты `9e36579` (feat) + `1ccda42` (fix) в dev
+Архитектурное решение: дефолтный список моделей захардкожен в коде (константа `AVAILABLE_MODELS_DEFAULTS`), файл `data/shared/registry/available_models.json` используется только как override для кастомизации пользователем. Работает из коробки без файла.
+Метод `list_available_models(config)` в `core/models_registry.py` — читает файл если есть, иначе возвращает дефолт.
+Структура данных: `{"ollama": [...], "diffusers": [...]}`, поля модели: name, source, size_gb, min_ram_gb, tag, description
 
 ### Этап 2: Ядро — модуль скачивания ✅ ВЫПОЛНЕНО
 Коммит `8fb55b6` в dev
