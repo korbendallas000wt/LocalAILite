@@ -42,6 +42,7 @@
 | core/ollama_model_info.py | v1.0.0 | Кэш лимитов контекста моделей из /api/show (TTL 5 мин). Методы: get_context_length, get_model_info. |
 | core/context_tracker.py | v1.0.0 | Трекер контекста: подсчёт токенов в промпте и истории, эмиссия прогресса в SharedBottomBar. |
 | core/file_reader.py | v1.0.0 | Чтение и валидация файлов для вложений (размер, тип, кодировка). |
+| core/model_downloader.py | v1.0.0 | Общий контракт скачивания (прогресс, отмена, верификация) + OllamaDownloader (QProcess, ollama pull) + DiffusersDownloader (huggingface_hub/requests). |
 | core/ollama_manager.py | v1.2.0 | Управление процессом ollama serve (старт/стоп), проверка порта 11434, обработка конфликтов, логирование, PID-файлы, проверка RAM, CPU affinity, nice-приоритет. |
 | core/diffusers_worker.py | v1.2.0 | QProcess-обёртка для scripts/generate_diffusers.py, парсинг JSON-вывода, логирование, сигналы (step_updated, generation_finished, error_occurred). Проверка RAM, CPU limits, history_dir. Адаптация под diffusers 0.39+ (callback_on_step_end). |
 | core/checkpoint_manager.py | v1.0.0 | Менеджер чекпоинтов генерации. Сохранение latents + scheduler + generator в PT, метаданные в JSON, архивация с timestamp, загрузка из архива. |
@@ -120,7 +121,7 @@
 - `data/diffusers/previews/` — промежуточные превью: sdxl_{seed}_step{step:04d}.png
 - `data/image_prep/presets/` — зарезервировано для визуального редактора
 - `data/shared/config/local_config.json` — JSON-конфиг приложения (через utils/config.py)
-- `data/shared/registry/` — model_sources.json, models_registry.json
+- `data/shared/registry/` — model_sources.json, models_registry.json, available_models.json
 - `data/shared/logs/` — логи: diffusers_*.log, ollama_*.log, updater.log
 - `data/shared/pids/` — PID-файлы: ollama.pid, diffusers.pid
 

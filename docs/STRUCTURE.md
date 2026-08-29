@@ -38,6 +38,7 @@
     │   ├── ollama_model_info.py          # Кэш лимитов контекста моделей Ollama (TTL 5 мин, /api/show)
     │   ├── context_tracker.py             # Трекер контекста (подсчёт токенов, прогресс в статусбар)
     │   ├── file_reader.py                # Чтение и валидация файлов для вложений
+    │   ├── model_downloader.py         # Общий контракт скачивания + OllamaDownloader + DiffusersDownloader
     │   ├── resource_manager.py              # Управление ресурсом: acquire/release, 2 арендатора
     │   ├── resource_monitor.py              # Мониторинг RAM/CPU, реальная проверка RAM, лимиты, PID
     │   └── updater.py                     # Модуль обновлений v2.0: проверка + скачивание + установка (QThread + urllib)
@@ -162,6 +163,8 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/context_tracker.py
 - **file_reader.py** — чтение и валидация файлов для вложений
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/file_reader.py
+- **model_downloader.py** — общий контракт скачивания (прогресс, отмена, верификация) + OllamaDownloader (QProcess) + DiffusersDownloader (huggingface_hub/requests)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/model_downloader.py
 - **resource_manager.py** — управление ресурсом: acquire/release, 2 арендатора
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/resource_manager.py
 - **resource_monitor.py** — мониторинг RAM/CPU, лимиты, PID
