@@ -205,3 +205,44 @@ def get_model_info_by_name(config: Config, display_name: str) -> dict:
     if isinstance(info, dict):
         return info
     return {}
+
+
+def list_available_models(config: Config) -> dict:
+    """Читает реестр доступных моделей из available_models.json.
+    
+    Returns:
+        {
+            "ollama": [
+                {"name": str, "source": str, "size_gb": float, 
+                 "min_ram_gb": int, "tag": str, "description": str},
+                ...
+            ],
+            "diffusers": [
+                {"name": str, "source": str, "size_gb": float,
+                 "min_ram_gb": int, "tag": str, "description": str},
+                ...
+            ]
+        }
+    """
+    import os
+    import json
+    
+    registry_path = os.path.join(
+        os.path.dirname(config.get_models_registry_path()),
+        "available_models.json"
+    )
+    
+    if not os.path.exists(registry_path):
+        print(f"[ModelsRegistry] Файл {registry_path} не найден")
+        return {"ollama": [], "diffusers": []}
+    
+    try:
+        with open(registry_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {
+            "ollama": data.get("ollama", []),
+            "diffusers": data.get("diffusers", [])
+        }
+    except Exception as e:
+        print(f"[ModelsRegistry] Ошибка чтения {registry_path}: {e}")
+        return {"ollama": [], "diffusers": []}
