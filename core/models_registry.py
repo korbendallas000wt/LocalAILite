@@ -207,8 +207,66 @@ def get_model_info_by_name(config: Config, display_name: str) -> dict:
     return {}
 
 
+# Дефолтный список доступных моделей (используется, если файл в data/ отсутствует)
+AVAILABLE_MODELS_DEFAULTS = {
+    "ollama": [
+        {
+            "name": "qwen2.5:3b",
+            "source": "qwen2.5:3b",
+            "size_gb": 2.1,
+            "min_ram_gb": 8,
+            "tag": "chat",
+            "description": "Быстрая модель для чата, хорошее соотношение скорость/качество"
+        },
+        {
+            "name": "llama3.1:8b",
+            "source": "llama3.1:8b",
+            "size_gb": 4.7,
+            "min_ram_gb": 16,
+            "tag": "chat",
+            "description": "Универсальная модель от Meta, хорошее качество ответов"
+        },
+        {
+            "name": "mistral:7b",
+            "source": "mistral:7b",
+            "size_gb": 4.1,
+            "min_ram_gb": 16,
+            "tag": "chat",
+            "description": "Сбалансированная модель от Mistral AI"
+        }
+    ],
+    "diffusers": [
+        {
+            "name": "SDXL Base 1.0",
+            "source": "stabilityai/stable-diffusion-xl-base-1.0",
+            "size_gb": 6.9,
+            "min_ram_gb": 16,
+            "tag": "image_gen",
+            "description": "Базовая модель SDXL для генерации изображений 1024×1024"
+        },
+        {
+            "name": "Dreamshaper XL Turbo",
+            "source": "Lykon/dreamshaper-xl-v2-turbo",
+            "size_gb": 6.5,
+            "min_ram_gb": 16,
+            "tag": "image_gen",
+            "description": "Быстрая версия SDXL для ускоренной генерации"
+        },
+        {
+            "name": "Juggernaut XL v9",
+            "source": "RunDiffusion/Juggernaut-XL-v9",
+            "size_gb": 6.8,
+            "min_ram_gb": 16,
+            "tag": "image_gen",
+            "description": "Высококачественная модель для фотореалистичных изображений"
+        }
+    ]
+}
+
+
 def list_available_models(config: Config) -> dict:
     """Читает реестр доступных моделей из available_models.json.
+    Если файл не существует — возвращает дефолтный список из кода.
     
     Returns:
         {
@@ -226,23 +284,25 @@ def list_available_models(config: Config) -> dict:
     """
     import os
     import json
+    import copy
     
     registry_path = os.path.join(
         os.path.dirname(config.get_models_registry_path()),
         "available_models.json"
     )
     
-    if not os.path.exists(registry_path):
-        print(f"[ModelsRegistry] Файл {registry_path} не найден")
-        return {"ollama": [], "diffusers": []}
+    # Если файл есть и валидный — читаем его
+    if os.path.exists(registry_path):
+        try:
+            with open(registry_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {
+                "ollama": data.get("ollama", []),
+                "diffusers": data.get("diffusers", [])
+            }
+        except Exception as e:
+            print(f"[ModelsRegistry] Ошибка чтения {registry_path}: {e}")
+            # Fallback на дефолт
     
-    try:
-        with open(registry_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return {
-            "ollama": data.get("ollama", []),
-            "diffusers": data.get("diffusers", [])
-        }
-    except Exception as e:
-        print(f"[ModelsRegistry] Ошибка чтения {registry_path}: {e}")
-        return {"ollama": [], "diffusers": []}
+    # Файла нет или битый — возвращаем дефолт
+    return copy.deepcopy(AVAILABLE_MODELS_DEFAULTS)
