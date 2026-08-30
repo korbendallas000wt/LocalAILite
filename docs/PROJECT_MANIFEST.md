@@ -54,7 +54,7 @@
 | core/path_validator.py | v1.1.0 | Валидация путей (venv, модели, output, Ollama URL, бинарник Ollama, модели Ollama), проверка доступности, подсчёт моделей. |
 | core/paths_manager.py | v1.4.0 | Единый модуль управления путями: ключи QSettings, дефолты, размеры, labels, критичность, get_raw_paths/get_effective_paths/set_path, валидация с уровнями (0/1/2), источники моделей из data/model_sources.json. |
 | core/markdown_parser.py | v1.0.0 | Парсер Markdown в HTML с адаптацией под системную тему KDE, подсветка кода, кнопки копирования, обработка ссылок, списков, заголовков, рендер карточек вложений. |
-| core/updater.py | v2.0 | Модуль обновлений: проверка версий, скачивание, установка из ветки main, логирование, graceful shutdown. |
+| core/updater.py | v2.1 | Модуль обновлений: проверка версий (асинхронно через QNetworkAccessManager), скачивание/установка (QThread), логирование. |
 
 ### Скрипты (scripts/)
 

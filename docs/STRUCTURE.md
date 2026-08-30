@@ -41,7 +41,7 @@
     │   ├── model_downloader.py         # Общий контракт скачивания + OllamaDownloader + DiffusersDownloader
     │   ├── resource_manager.py              # Управление ресурсом: acquire/release, 2 арендатора
     │   ├── resource_monitor.py              # Мониторинг RAM/CPU, реальная проверка RAM, лимиты, PID
-    │   └── updater.py                     # Модуль обновлений v2.0: проверка + скачивание + установка (QThread + urllib)
+    │   └── updater.py                     # Модуль обновлений v2.1: проверка версий (асинхронно, QNetworkAccessManager) + скачивание/установка (QThread)
     │
     ├── scripts/                             # CLI-скрипты (запускаются в venv)
     │   ├── generate_diffusers.py            # Генерация SDXL: callback_on_step_end, чекпоинты, точный resume
@@ -169,7 +169,7 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/resource_manager.py
 - **resource_monitor.py** — мониторинг RAM/CPU, лимиты, PID
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/resource_monitor.py
-- **updater.py** — модуль обновлений v2.0: проверка + скачивание + установка (QThread + urllib)
+- **updater.py** — модуль обновлений v2.1: проверка версий (асинхронно, QNetworkAccessManager) + скачивание/установка (QThread)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/updater.py
 
 
