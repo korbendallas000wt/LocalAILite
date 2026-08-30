@@ -37,7 +37,36 @@
 
 ---
 
-## 2026-08-30 — Диагностика краша QThread (не устранён, откат)
+## 2026-08-30 (сессия 2): Краш QThread — причина найдена и устранена ✅
+
+**Цель:** устранить краш `QThread: Destroyed while thread '' is still running` при закрытии настроек.
+
+**Точечная диагностика (по наблюдениям Корбена):**
+- Цепочка исследования: `folder_dialog.py` → `chat_settings_widget.py` → `settings_dialog.py` → `update_settings_widget.py` → `core/updater.py` → `main_window.py`
+- Гипотеза про обёртку FolderDialog не подтвердилась: `chat_settings_widget.py` использует `QFileDialog.getExistingDirectory` напрямую
+- Ключевая зацепка: краш иногда не происходил при смене папки чатов — модальный `QFileDialog` запускает вложенный event loop, поток успевал завершиться
+
+**Корневая причина:**
+- `UpdateSettingsWidget.__init__` сразу вызывает `updater.check_for_updates()` → `_VersionCheckWorker(QThread)` с блокирующим `urlopen(timeout=10)`
+- `SettingsDialog.closeEvent` → `updater.shutdown()` → `wait(3000)` ждёт лишь 3 секунды
+- Закрытие настроек быстрее, чем `urlopen` отпустит поток → QThread уничтожается на ходу → краш
+
+**Директива Корбена:** «Ни один вызванный пользователем виджет не должен ждать нисколько секунд, если пользователь решит его закрыть». Переделывать систему, а не латать.
+
+**Решение — переделка `core/updater.py` на v2.1:**
+- Проверка версий: `QNetworkAccessManager` вместо QThread (полностью асинхронно; `shutdown()`/`wait()` не нужны — Qt сам отменяет запросы при уничтожении объекта)
+- Словарь `_pending_requests`: маппинг reply → тип запроса (version_check / changelog)
+- `UpdateWorker(QThread)` для скачивания/установки архива сохранён (тяжёлая задача, стартует только по кнопке)
+
+**Сопутствующие правки:**
+- `ui/dialogs/settings/settings_dialog.py`: убран вызов `updater.shutdown()` из `closeEvent`
+- `ui/main_window.py`: `Updater()` → `Updater(self)` (дерево родителей Qt)
+
+**Результат:** тесты пройдены — быстрое закрытие настроек, закрытие после ожидания, закрытие после «Обзор» — краша нет.
+
+**Следующий шаг:** тест нового модуля обновлений на релизе.
+
+## 2026-08-30 (сессия 1) — Диагностика краша QThread (не устранён, откат)
 
 **Цель сессии**: найти и устранить краш `QThread: Destroyed while thread '' is still running` при закрытии настроек.
 

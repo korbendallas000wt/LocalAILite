@@ -118,7 +118,7 @@ class MainWindow(QMainWindow):
 
         # Проверка обновлений (через 3 сек после старта)
         from core.updater import Updater
-        self.updater = Updater()
+        self.updater = Updater(self)
         self.updater.update_available.connect(self._on_update_available)
         self.updater.check_failed.connect(
             lambda err: print(f"Updater: проверка не удалась: {err}")
