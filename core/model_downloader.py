@@ -210,7 +210,7 @@ class OllamaDownloader(ModelDownloader):
         
         output = self._process.readAllStandardOutput().data().decode('utf-8', errors='ignore')
         
-        for line in output.split('\n'):
+        for line in re.split(r'[\r\n]+', output):
             line = line.strip()
             if not line:
                 continue
@@ -336,6 +336,24 @@ import json
 try:
     from huggingface_hub import snapshot_download
     
+    from huggingface_hub import list_repo_files
+
+    # Определяем реальный состав репозитория: веса бывают обычные и fp16
+    files = set(list_repo_files('{self._repo_id}'))
+    weights = []
+    for plain, fp16 in [
+        ("text_encoder/model.safetensors", "text_encoder/model.fp16.safetensors"),
+        ("text_encoder_2/model.safetensors", "text_encoder_2/model.fp16.safetensors"),
+        ("unet/diffusion_pytorch_model.safetensors", "unet/diffusion_pytorch_model.fp16.safetensors"),
+        ("vae/diffusion_pytorch_model.safetensors", "vae/diffusion_pytorch_model.fp16.safetensors"),
+    ]:
+        if fp16 in files:
+            weights.append(fp16)
+        elif plain in files:
+            weights.append(plain)
+    if not weights:
+        raise RuntimeError('В репозитории не найдено файлов весов (.safetensors)')
+
     # Скачиваем модель в HF cache формате
     snapshot_download(
         repo_id='{self._repo_id}',
@@ -344,16 +362,12 @@ try:
             "model_index.json",
             "scheduler/*",
             "text_encoder/config.json",
-            "text_encoder/model.safetensors",
             "text_encoder_2/config.json",
-            "text_encoder_2/model.safetensors",
             "tokenizer/*",
             "tokenizer_2/*",
             "unet/config.json",
-            "unet/diffusion_pytorch_model.safetensors",
             "vae/config.json",
-            "vae/diffusion_pytorch_model.safetensors",
-        ]
+        ] + weights
     )
     
     # Успех
@@ -391,7 +405,7 @@ except Exception as e:
         
         output = self._process.readAllStandardOutput().data().decode('utf-8', errors='ignore')
         
-        for line in output.split('\n'):
+        for line in re.split(r'[\r\n]+', output):
             line = line.strip()
             if not line:
                 continue

@@ -242,6 +242,7 @@ AVAILABLE_MODELS_DEFAULTS = {
             "size_gb": 6.9,
             "min_ram_gb": 16,
             "tag": "image_gen",
+            "packaging": "hf_cache",
             "description": "Базовая модель SDXL для генерации изображений 1024×1024"
         },
         {
@@ -250,6 +251,7 @@ AVAILABLE_MODELS_DEFAULTS = {
             "size_gb": 6.5,
             "min_ram_gb": 16,
             "tag": "image_gen",
+            "packaging": "hf_cache",
             "description": "Быстрая версия SDXL для ускоренной генерации"
         },
         {
@@ -258,6 +260,7 @@ AVAILABLE_MODELS_DEFAULTS = {
             "size_gb": 6.8,
             "min_ram_gb": 16,
             "tag": "image_gen",
+            "packaging": "hf_cache",
             "description": "Высококачественная модель для фотореалистичных изображений"
         }
     ]
@@ -306,3 +309,43 @@ def list_available_models(config: Config) -> dict:
     
     # Файла нет или битый — возвращаем дефолт
     return copy.deepcopy(AVAILABLE_MODELS_DEFAULTS)
+
+
+def list_installed_ollama_models(config: Config) -> list:
+    """Возвращает список установленных Ollama моделей (теги вида 'model:tag').
+    Сканирует папку manifests/registry.ollama.ai/library/ напрямую,
+    не требует запущенного сервера.
+    
+    Реальная структура Ollama:
+        manifests/registry.ollama.ai/library/{model}/{tag}
+    Пример:
+        library/qwen2.5-coder/3b     ← файл-манифест
+        library/qwen2.5-coder/7b     ← файл-манифест
+    Результат: ["qwen2.5-coder:3b", "qwen2.5-coder:7b"]
+    """
+    from core.paths_manager import PathsManager
+    pm = PathsManager()
+    models_path = pm.get_path(config, "ollama_models")
+    
+    models = []
+    if not models_path or not os.path.exists(models_path):
+        return models
+    
+    # Путь к манифестам: {models_path}/manifests/registry.ollama.ai/library/
+    library_path = os.path.join(models_path, "manifests", "registry.ollama.ai", "library")
+    if not os.path.isdir(library_path):
+        return models
+    
+    # Сканируем папки-модели напрямую в library/
+    for model_name in os.listdir(library_path):
+        model_path = os.path.join(library_path, model_name)
+        if not os.path.isdir(model_path):
+            continue
+        
+        # Сканируем теги (файлы внутри папки модели)
+        for tag in os.listdir(model_path):
+            tag_path = os.path.join(model_path, tag)
+            if os.path.isfile(tag_path):
+                models.append(f"{model_name}:{tag}")
+    
+    return models

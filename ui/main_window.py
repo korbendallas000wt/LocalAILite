@@ -134,6 +134,13 @@ class MainWindow(QMainWindow):
         file_menu.addAction(exit_action)
         
         
+
+        # Менеджер моделей
+        models_menu = menubar.addMenu("Модели")
+        models_action = QAction("Менеджер моделей...", self)
+        models_action.triggered.connect(self._show_model_manager)
+        models_menu.addAction(models_action)
+
         # Освобождение ресурсов
         tools_menu = menubar.addMenu("Инструменты")
         cleanup_action = QAction("🧹 Освободить ресурсы", self)
@@ -145,6 +152,11 @@ class MainWindow(QMainWindow):
         self.settings_action.triggered.connect(self._show_settings_dialog)
         menubar.addAction(self.settings_action)
     
+    def _show_model_manager(self):
+        from ui.dialogs.model_manager_dialog import ModelManagerDialog
+        dialog = ModelManagerDialog(self.config, self)
+        dialog.exec()
+
     def _show_settings_dialog(self):
         from core.paths_manager import PathsManager
         pm = PathsManager()
