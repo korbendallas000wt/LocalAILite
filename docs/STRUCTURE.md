@@ -68,7 +68,7 @@
     │   │       ├── chat_settings_widget.py          # Вкладка Чат (формат сохранения, папка)
     │   │       ├── diffusers_settings_widget.py     # Вкладка Diffusers
     │   │       ├── resources_settings_widget.py     # Вкладка Ресурсы
- │   │       └── update_settings_widget.py        # Вкладка Обновления (v2.0)
+    │   │       └── update_settings_widget.py        # Вкладка Обновления (v2.0)
     │   └── tabs/                            # Вкладки главного окна
     │       ├── ollama_tab.py                # Чат: ChatWidget + SettingsPanel + OllamaClient
     │       ├── diffusers_tab.py             # Генерация: preview + settings + DiffusersWorker
