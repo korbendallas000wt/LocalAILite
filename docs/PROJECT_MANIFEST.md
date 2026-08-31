@@ -13,7 +13,7 @@
 | Модуль | Версия | Роль |
 |--------|--------|------|
 | main.py | v1.2.0 | Точка входа. QApplication, валидация путей через PathValidator, запуск MainWindow, диалог настройки путей при первом запуске. |
-| ui/main_window.py | v1.2.1 | Оболочка. QTabWidget (3 вкладки: Ollama Chat, Diffusers, Visual editor), SharedBottomBar, меню, OllamaManager, корректный closeEvent с CleanupDialog. Исправлена коллизия имён табов при сохранении состояния. |
+| ui/main_window.py | v1.3.0 | Оболочка. QTabWidget (3 вкладки), SharedBottomBar, меню (Файл / Модели / Инструменты / Справка), OllamaManager, корректный closeEvent с CleanupDialog. Меню «Модели» → Менеджер моделей. Исправлена коллизия имён табов при сохранении состояния. |
 | ui/tabs/ollama_tab.py | v1.2.0 | Чат. ChatWidget + SettingsPanel + OllamaClient (QThread), управление историей через ChatManager, acquire/release ресурса. |
 | ui/tabs/diffusers_tab.py | v1.2.1 | Генерация. QGraphicsView для превью, DiffusersSettingsPanel, DiffusersWorker (QProcess), управление чекпоинтами и историей. Исправлена утечка ресурса и гонка при остановке. |
 | ui/tabs/image_prep_tab.py | v1.1.0 | Visual editor. QGraphicsView + галерея + обработка изображений (resize/crop). |
@@ -27,8 +27,10 @@
 | ui/dialogs/paths_dialog.py | v1.0.0 | Стартовый диалог. Настройка путей (venv, модели, output, Ollama URL) с валидацией. |
 | ui/dialogs/diffusers_models_dialog.py | v1.0.0 | Управление моделями. Список, удаление, открытие папки, ссылки на ресурсы (HuggingFace, CivitAI). |
 | ui/dialogs/history_save_dialog.py | v1.2.0 | Диалог сохранения истории генерации (чекбокс создания превью, таймер авто-сохранения). |
+| ui/dialogs/model_manager_dialog.py | v1.0.0 | Менеджер моделей: список доступных (с override через available_models.json), фильтр по железу, вердикты по ОЗУ, скачивание с прогрессом и отменой. Одна загрузка за раз. |
 | ui/dialogs/settings/settings_dialog.py | v1.0.0 | Окно настроек. Вкладки (Общие, Diffusers, Ресурсы). |
 | ui/dialogs/settings/paths_settings_widget.py | v1.0.0 | Вкладка Общие. Настройки путей с валидацией в реальном времени. |
+| ui/dialogs/settings/chat_settings_widget.py | v1.0.0 | Вкладка Чат. Формат сохранения (JSON/TXT), папка чатов (через FolderDialog mode=select), автозаголовок через LLM. |
 | ui/dialogs/settings/diffusers_settings_widget.py | v1.0.0 | Вкладка Diffusers. Device, safety_checker, управление моделями. |
 | ui/dialogs/settings/resources_settings_widget.py | v1.0.0 | Вкладка Ресурсы. max_ram_percent, cpu_cores, cpu_priority. |
 | ui/dialogs/settings/update_settings_widget.py | v1.5.0 | Вкладка Обновления. Проверка версий, скачивание, установка, CHANGELOG, перезагрузка. |
@@ -49,7 +51,7 @@
 | core/history_manager.py | v1.1.0 | Менеджер истории генерации. Создаёт папки data/history/{timestamp}/, сохраняет metadata.json, копирует PNG на каждом шаге, список историй, удаление. |
 | core/resource_manager.py | v1.2.0 | Управление ресурсом (GPU/RAM): acquire/release, 2 арендатора (Ollama, Diffusers). Переключение табов + выгрузка неактивных модулей. |
 | core/resource_monitor.py | v1.2.1 | Мониторинг RAM/CPU через psutil, реальная проверка RAM (psutil.virtual_memory), оценка потребления SDXL 9-11 GB, применение лимитов (cpu_affinity, priority, env-переменные), управление процессами по PID (read_pid_file, is_process_alive, kill_process_by_pid). |
-| core/models_registry.py | v1.4.0 | Реестр моделей v2.0: короткое имя ↔ {path, full_name, type}. KNOWN_MODELS, типы (hf_cache/file/folder), проверка актуальности по models_path, beautify_name. |
+| core/models_registry.py | v1.5.0 | Реестр моделей v2.0: короткое имя ↔ {path, full_name, type}. KNOWN_MODELS, типы (hf_cache/file/folder), поле packaging, beautify_name. Методы: list_available_models (дефолт в коде + override available_models.json), list_installed_ollama_models (сканирование manifests/ без сервера). |
 | core/image_processor.py | v1.1.0 | Обработка изображений: resize, crop (center/letterbox/stretch), нормализация до кратности 8. |
 | core/path_validator.py | v1.1.0 | Валидация путей (venv, модели, output, Ollama URL, бинарник Ollama, модели Ollama), проверка доступности, подсчёт моделей. |
 | core/paths_manager.py | v1.4.0 | Единый модуль управления путями: ключи QSettings, дефолты, размеры, labels, критичность, get_raw_paths/get_effective_paths/set_path, валидация с уровнями (0/1/2), источники моделей из data/model_sources.json. |

@@ -61,6 +61,7 @@
     │   │   ├── diffusers_models_dialog.py   # Управление моделями (список, удалить, открыть)
     │   │   ├── history_save_dialog.py       # Диалог сохранения истории генерации
     │   │   ├── folder_dialog.py             # Обёртка над QFileDialog с режимами (navigate/select)
+    │   │   ├── model_manager_dialog.py      # Менеджер моделей: список, вердикты по железу, скачивание
     │   │   └── settings/
     │   │       ├── settings_dialog.py       # Окно настроек (вкладки)
     │   │       ├── paths_settings_widget.py         # Вкладка Общие
@@ -237,6 +238,8 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/history_save_dialog.py
 - **dialogs/folder_dialog.py** — обёртка над QFileDialog с режимами (navigate/select)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/folder_dialog.py
+dialogs/model_manager_dialog.py — менеджер моделей: список, вердикты по железу, скачивание с прогрессом и отменой
+https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/model_manager_dialog.py
 - **dialogs/settings/settings_dialog.py** — окно настроек (вкладки)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/settings/settings_dialog.py
 dialogs/settings/update_settings_widget.py — вкладка Обновления (v2.0)
