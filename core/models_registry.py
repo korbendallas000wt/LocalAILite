@@ -205,3 +205,147 @@ def get_model_info_by_name(config: Config, display_name: str) -> dict:
     if isinstance(info, dict):
         return info
     return {}
+
+
+# Дефолтный список доступных моделей (используется, если файл в data/ отсутствует)
+AVAILABLE_MODELS_DEFAULTS = {
+    "ollama": [
+        {
+            "name": "qwen2.5:3b",
+            "source": "qwen2.5:3b",
+            "size_gb": 2.1,
+            "min_ram_gb": 8,
+            "tag": "chat",
+            "description": "Быстрая модель для чата, хорошее соотношение скорость/качество"
+        },
+        {
+            "name": "llama3.1:8b",
+            "source": "llama3.1:8b",
+            "size_gb": 4.7,
+            "min_ram_gb": 16,
+            "tag": "chat",
+            "description": "Универсальная модель от Meta, хорошее качество ответов"
+        },
+        {
+            "name": "mistral:7b",
+            "source": "mistral:7b",
+            "size_gb": 4.1,
+            "min_ram_gb": 16,
+            "tag": "chat",
+            "description": "Сбалансированная модель от Mistral AI"
+        }
+    ],
+    "diffusers": [
+        {
+            "name": "SDXL Base 1.0",
+            "source": "stabilityai/stable-diffusion-xl-base-1.0",
+            "size_gb": 6.9,
+            "min_ram_gb": 16,
+            "tag": "image_gen",
+            "packaging": "hf_cache",
+            "description": "Базовая модель SDXL для генерации изображений 1024×1024"
+        },
+        {
+            "name": "Dreamshaper XL Turbo",
+            "source": "Lykon/dreamshaper-xl-v2-turbo",
+            "size_gb": 6.5,
+            "min_ram_gb": 16,
+            "tag": "image_gen",
+            "packaging": "hf_cache",
+            "description": "Быстрая версия SDXL для ускоренной генерации"
+        },
+        {
+            "name": "Juggernaut XL v9",
+            "source": "RunDiffusion/Juggernaut-XL-v9",
+            "size_gb": 6.8,
+            "min_ram_gb": 16,
+            "tag": "image_gen",
+            "packaging": "hf_cache",
+            "description": "Высококачественная модель для фотореалистичных изображений"
+        }
+    ]
+}
+
+
+def list_available_models(config: Config) -> dict:
+    """Читает реестр доступных моделей из available_models.json.
+    Если файл не существует — возвращает дефолтный список из кода.
+    
+    Returns:
+        {
+            "ollama": [
+                {"name": str, "source": str, "size_gb": float, 
+                 "min_ram_gb": int, "tag": str, "description": str},
+                ...
+            ],
+            "diffusers": [
+                {"name": str, "source": str, "size_gb": float,
+                 "min_ram_gb": int, "tag": str, "description": str},
+                ...
+            ]
+        }
+    """
+    import os
+    import json
+    import copy
+    
+    registry_path = os.path.join(
+        os.path.dirname(config.get_models_registry_path()),
+        "available_models.json"
+    )
+    
+    # Если файл есть и валидный — читаем его
+    if os.path.exists(registry_path):
+        try:
+            with open(registry_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {
+                "ollama": data.get("ollama", []),
+                "diffusers": data.get("diffusers", [])
+            }
+        except Exception as e:
+            print(f"[ModelsRegistry] Ошибка чтения {registry_path}: {e}")
+            # Fallback на дефолт
+    
+    # Файла нет или битый — возвращаем дефолт
+    return copy.deepcopy(AVAILABLE_MODELS_DEFAULTS)
+
+
+def list_installed_ollama_models(config: Config) -> list:
+    """Возвращает список установленных Ollama моделей (теги вида 'model:tag').
+    Сканирует папку manifests/registry.ollama.ai/library/ напрямую,
+    не требует запущенного сервера.
+    
+    Реальная структура Ollama:
+        manifests/registry.ollama.ai/library/{model}/{tag}
+    Пример:
+        library/qwen2.5-coder/3b     ← файл-манифест
+        library/qwen2.5-coder/7b     ← файл-манифест
+    Результат: ["qwen2.5-coder:3b", "qwen2.5-coder:7b"]
+    """
+    from core.paths_manager import PathsManager
+    pm = PathsManager()
+    models_path = pm.get_path(config, "ollama_models")
+    
+    models = []
+    if not models_path or not os.path.exists(models_path):
+        return models
+    
+    # Путь к манифестам: {models_path}/manifests/registry.ollama.ai/library/
+    library_path = os.path.join(models_path, "manifests", "registry.ollama.ai", "library")
+    if not os.path.isdir(library_path):
+        return models
+    
+    # Сканируем папки-модели напрямую в library/
+    for model_name in os.listdir(library_path):
+        model_path = os.path.join(library_path, model_name)
+        if not os.path.isdir(model_path):
+            continue
+        
+        # Сканируем теги (файлы внутри папки модели)
+        for tag in os.listdir(model_path):
+            tag_path = os.path.join(model_path, tag)
+            if os.path.isfile(tag_path):
+                models.append(f"{model_name}:{tag}")
+    
+    return models

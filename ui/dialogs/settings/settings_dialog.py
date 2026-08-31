@@ -58,8 +58,6 @@ class SettingsDialog(QDialog):
         self._auto_close_timer = None
 
     def closeEvent(self, event):
-        if hasattr(self, 'update_widget') and self.update_widget:
-            self.update_widget.updater.shutdown()
         super().closeEvent(event)
 
     def _on_all_valid(self):

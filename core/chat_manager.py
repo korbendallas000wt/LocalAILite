@@ -5,7 +5,7 @@ class ChatManager:
         self.messages = []
         self._user_msg_counter = 0  # Счётчик для уникальных индексов сообщений пользователя
 
-    def add_user_message(self, content, user_msg_index=None):
+    def add_user_message(self, content, user_msg_index=None, attachments=None):
         if user_msg_index is None:
             user_msg_index = self._user_msg_counter
             self._user_msg_counter += 1
@@ -18,6 +18,8 @@ class ChatManager:
             "user_msg_index": user_msg_index,
             "variants": []
         }
+        if attachments:
+            msg["attachments"] = attachments
         self.messages.append(msg)
 
     def add_assistant_message(self, content, stats=None):

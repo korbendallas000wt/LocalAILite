@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QTextEdit,
-                              QPushButton, QProgressBar, QLabel, QGroupBox)
+                              QPushButton, QProgressBar, QLabel, QGroupBox, QApplication)
 from PyQt6.QtCore import pyqtSignal, Qt, QTimer
-from PyQt6.QtGui import QTextCursor
+from PyQt6.QtGui import QTextCursor, QPalette, QColor
 
 
 class PlainTextEdit(QTextEdit):
@@ -119,9 +119,24 @@ class SharedBottomBar(QWidget):
         else:
             self.status_label.setStyleSheet("")
 
-    def set_progress(self, current, total):
+    def set_progress(self, current, total, colorize=False):
         self.progress_bar.setRange(0, max(total, 0))
         self.progress_bar.setValue(current)
+
+        # Подкраска на пределах — через палитру, чтобы не ломать нативный скин
+        if colorize and total > 0:
+            percent = current / total
+            if percent >= 0.9:
+                color = QColor("#d9534f")  # красный — критично
+            elif percent >= 0.7:
+                color = QColor("#f0ad4e")  # оранжевый — внимание
+            else:
+                color = QColor("#5cb85c")  # зелёный — норма
+            pal = self.progress_bar.palette()
+            pal.setColor(QPalette.ColorRole.Highlight, color)
+            self.progress_bar.setPalette(pal)
+        else:
+            self.progress_bar.setPalette(QApplication.palette())
 
     def set_timer_display(self, seconds: int):
         """Устанавливает отображение таймера (в секундах)"""

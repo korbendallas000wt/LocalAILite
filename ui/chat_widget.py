@@ -8,6 +8,9 @@ class ChatWidget(QWidget):
     trim_requested = pyqtSignal(int)       # user_msg_index
     branch_requested = pyqtSignal(int)     # user_msg_index
     load_chat_requested = pyqtSignal(int)      # номер чата для загрузки
+    # Сигналы для вложений
+    open_file_requested = pyqtSignal(int, int)   # user_msg_index, file_idx
+    remove_file_requested = pyqtSignal(int, int) # user_msg_index, file_idx
 
     def __init__(self):
         super().__init__()
@@ -31,8 +34,8 @@ class ChatWidget(QWidget):
     def set_auto_scroll(self, enabled: bool):
         self.auto_scroll_enabled = enabled
 
-    def append_user_message(self, text, user_msg_index=-1, branches_count=0, alternatives=None):
-        html = self.parser.render_user_message(text, user_msg_index, branches_count, alternatives)
+    def append_user_message(self, text, user_msg_index=-1, branches_count=0, alternatives=None, attachments=None):
+        html = self.parser.render_user_message(text, user_msg_index, branches_count, alternatives, attachments)
         self._history_html.append(("user", html))
         self._rerender()
 
@@ -65,7 +68,8 @@ class ChatWidget(QWidget):
                 user_idx = msg.get("user_msg_index", -1)
                 branches_count = current_chat_number if current_chat_number else 0
                 alternatives = alternatives_func(user_idx) if alternatives_func else None
-                self.append_user_message(msg["content"], user_idx, branches_count, alternatives)
+                attachments = msg.get("attachments", None)
+                self.append_user_message(msg["content"], user_idx, branches_count, alternatives, attachments)
             elif msg["role"] == "assistant":
                 self.append_assistant_message(msg["content"], msg.get("stats"))
 
@@ -135,6 +139,22 @@ class ChatWidget(QWidget):
                 chat_num = int(anchor.split(':')[1])
                 self.load_chat_requested.emit(chat_num)
             except ValueError:
+                pass
+        elif anchor.startswith('#openfile:'):
+            try:
+                parts = anchor.split(':')
+                user_idx = int(parts[1])
+                file_idx = int(parts[2])
+                self.open_file_requested.emit(user_idx, file_idx)
+            except (ValueError, IndexError):
+                pass
+        elif anchor.startswith('#removefile:'):
+            try:
+                parts = anchor.split(':')
+                user_idx = int(parts[1])
+                file_idx = int(parts[2])
+                self.remove_file_requested.emit(user_idx, file_idx)
+            except (ValueError, IndexError):
                 pass
         
         QTimer.singleShot(0, lambda: sb.setValue(scroll_pos))

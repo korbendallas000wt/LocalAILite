@@ -164,10 +164,58 @@ class MarkdownParser:
         out.append('</table>')
         return ''.join(out)
 
-    def render_user_message(self, text, user_msg_index=-1, branches_count=0, alternatives=None):
+    def _format_size(self, size_bytes):
+        """Форматирует размер в байтах в человекочитаемый вид."""
+        if size_bytes < 1024:
+            return f'{size_bytes} Б'
+        elif size_bytes < 1024 * 1024:
+            return f'{size_bytes / 1024:.1f} КБ'
+        else:
+            return f'{size_bytes / (1024 * 1024):.1f} МБ'
+
+    def render_file_attachment(self, attachment, user_msg_index=-1, file_idx=0):
+        """Карточка вложения: иконка + имя + размер + кнопка удаления."""
+        colors = self._get_colors()
+        filename = attachment.get("filename", "файл")
+        size_bytes = attachment.get("size_bytes", 0)
+        size_str = self._format_size(size_bytes)
+
+        open_link = (
+            f'<a href="#openfile:{user_msg_index}:{file_idx}" '
+            f'style="color:{colors["link"]};text-decoration:none;">'
+            f'{self._escape_html(filename)}</a>'
+        )
+
+        remove_btn = ''
+        if user_msg_index >= 0:
+            remove_btn = (
+                f' <a href="#removefile:{user_msg_index}:{file_idx}" '
+                f'style="color:{colors["dim"]};text-decoration:none;">✕</a>'
+            )
+
+        return (
+            f'<div style="background:{colors["base"]};'
+            f'border:1px solid {colors["dim"]};'
+            f'border-radius:4px;'
+            f'padding:3px 8px;'
+            f'margin:0 0 6px 0;'
+            f'font-size:0.9em;'
+            f'font-family:sans-serif;">'
+            f'📄 {open_link}'
+            f' <span style="color:{colors["dim"]};">· {size_str}</span>'
+            f'{remove_btn}'
+            f'</div>'
+        )
+
+    def render_user_message(self, text, user_msg_index=-1, branches_count=0, alternatives=None, attachments=None):
         """Сообщение пользователя: смещено вправо, с кнопками управления и навигацией."""
         colors = self._get_colors()
         escaped = self._escape_html(text)
+
+        attachments_html = ""
+        if attachments:
+            for idx, att in enumerate(attachments):
+                attachments_html += self.render_file_attachment(att, user_msg_index, idx)
         
         buttons_html = ""
         if user_msg_index >= 0:
@@ -200,6 +248,7 @@ class MarkdownParser:
             f'<td style="background:{colors["alt_base"]};'
             f'border-right:3px solid {colors["highlight"]};'
             f'padding:6px 10px;font-size:0.9em;color:{colors["text"]};">'
+            f'{attachments_html}'
             f'<div style="white-space:pre-wrap;">{escaped}</div>'
             f'</td>'
             f'</tr>'

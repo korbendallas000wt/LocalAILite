@@ -74,6 +74,28 @@ def main():
     # Создаём выходную папку
     os.makedirs(args.output_dir, exist_ok=True)
 
+    # === Детекция варианта весов (например, *.fp16.safetensors) ===
+    def _detect_variant(model_path):
+        """Определяет вариант весов модели по фактическим файлам в папке.
+
+        Возвращает строку вида 'fp16', если веса лежат как *.fp16.safetensors
+        и нет обычных *.safetensors, иначе None.
+        """
+        for subfolder in ('unet', 'vae', 'text_encoder', 'text_encoder_2'):
+            subdir = os.path.join(model_path, subfolder)
+            if not os.path.isdir(subdir):
+                continue
+            has_fp16 = False
+            has_plain = False
+            for f in os.listdir(subdir):
+                if f.endswith('.fp16.safetensors'):
+                    has_fp16 = True
+                elif f.endswith('.safetensors'):
+                    has_plain = True
+            if has_fp16 and not has_plain:
+                return 'fp16'
+        return None
+
     # Загружаем модель
     print(f"[INFO] Loading model: {args.model}", flush=True)
     dtype = torch.float16 if args.device == "cuda" else torch.float32
@@ -87,9 +109,13 @@ def main():
                 use_safetensors=args.model.endswith('.safetensors')
             )
         else:
+            variant = _detect_variant(args.model)
+            if variant:
+                print(f"[INFO] Detected model variant: {variant}", flush=True)
             pipe = StableDiffusionXLPipeline.from_pretrained(
                 args.model,
                 torch_dtype=dtype,
+                variant=variant,
                 cache_dir=args.cache_dir if args.cache_dir else None
             )
     except Exception as e:

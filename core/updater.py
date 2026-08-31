@@ -1,9 +1,9 @@
 """
-core/updater.py — модуль обновлений (v2.0).
+core/updater.py — модуль обновлений (v2.1, QNetworkAccessManager).
 
 Проверка версий + скачивание + установка.
 Контракт:
-    check_for_updates()              — запустить фоновую проверку
+    check_for_updates()              — запустить фоновую проверку (асинхронно)
     start_update()                   — запустить полный цикл обновления
     update_available(current, new)   — найдена новая версия
     update_not_found(current)        — версия актуальна
@@ -12,8 +12,10 @@ core/updater.py — модуль обновлений (v2.0).
     update_finished(success, msg)    — обновление завершено
 
 Философия: ничего без ведома пользователя. Проверка → пользователь решает → обновление.
+Архитектура: QNetworkAccessManager вместо QThread (асинхронно, не требует shutdown).
 """
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, QUrl, pyqtSignal
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from pathlib import Path
 import urllib.request
 import zipfile
@@ -26,7 +28,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VERSION_URL = "https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/main/VERSION"
 ARCHIVE_URL = "https://github.com/korbendallas000wt/LocalAILite/archive/refs/heads/main.zip"
 CHANGELOG_URL = "https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/main/docs/CHANGELOG.md"
-TIMEOUT_SEC = 10
 LOG_FILE = PROJECT_ROOT / "data" / "shared" / "logs" / "updater.log"
 
 # Настройка логирования
@@ -39,35 +40,6 @@ logging.basicConfig(
     encoding="utf-8"
 )
 logger = logging.getLogger(__name__)
-
-
-class _VersionCheckWorker(QThread):
-    """Фоновая проверка: читает remote VERSION, не блокирует UI."""
-    finished_check = pyqtSignal(str, str)
-    failed = pyqtSignal(str)
-
-    def __init__(self, local_version, parent=None):
-        super().__init__(parent)
-        self.local_version = local_version
-
-    def run(self):
-        try:
-            logger.info(f"Проверка обновлений: текущая версия {self.local_version}")
-            req = urllib.request.Request(
-                VERSION_URL,
-                headers={"User-Agent": "LocalAILite-Updater/2.0"},
-            )
-            with urllib.request.urlopen(req, timeout=TIMEOUT_SEC) as resp:
-                remote_version = resp.read().decode("utf-8").strip()
-            if not remote_version:
-                logger.error("Пустой ответ VERSION")
-                self.failed.emit("Пустой ответ VERSION")
-                return
-            logger.info(f"Remote версия: {remote_version}")
-            self.finished_check.emit(self.local_version, remote_version)
-        except Exception as e:
-            logger.error(f"Ошибка проверки: {e}")
-            self.failed.emit(str(e))
 
 
 class UpdateWorker(QThread):
@@ -121,9 +93,9 @@ class UpdateWorker(QThread):
             
             req = urllib.request.Request(
                 ARCHIVE_URL,
-                headers={"User-Agent": "LocalAILite-Updater/2.0"},
+                headers={"User-Agent": "LocalAILite-Updater/2.1"},
             )
-            with urllib.request.urlopen(req, timeout=TIMEOUT_SEC) as resp:
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 with open(archive_path, "wb") as f:
                     while True:
                         if self._stop_flag:
@@ -209,7 +181,7 @@ class UpdateWorker(QThread):
 
 
 class Updater(QObject):
-    """Модуль обновлений."""
+    """Модуль обновлений (v2.1, асинхронный через QNetworkAccessManager)."""
     update_available = pyqtSignal(str, str)
     update_not_found = pyqtSignal(str)
     check_failed = pyqtSignal(str)
@@ -219,9 +191,11 @@ class Updater(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._check_worker = None
+        self._network_manager = QNetworkAccessManager(self)
+        self._network_manager.finished.connect(self._on_network_reply)
         self._update_worker = None
         self._remote_version = None
+        self._pending_requests = {}  # request_id -> request_type
 
     def get_local_version(self):
         """Читает локальную версию из файла VERSION."""
@@ -233,46 +207,84 @@ class Updater(QObject):
             return "0.0.0"
 
     def check_for_updates(self):
-        """Запускает фоновую проверку версий."""
-        if self._check_worker is not None and self._check_worker.isRunning():
-            return
+        """Запускает асинхронную проверку версий через QNetworkAccessManager."""
+        logger.info("Проверка обновлений (асинхронно)")
         local_version = self.get_local_version()
-        self._check_worker = _VersionCheckWorker(local_version, self)
-        self._check_worker.finished_check.connect(self._on_check_finished)
-        self._check_worker.failed.connect(self._on_check_failed)
-        self._check_worker.start()
+        
+        # Создаём запрос к VERSION
+        url = QUrl(VERSION_URL)
+        request = QNetworkRequest(url)
+        request.setRawHeader(b"User-Agent", b"LocalAILite-Updater/2.1")
+        
+        reply = self._network_manager.get(request)
+        # Сохраняем тип запроса для обработки в _on_network_reply
+        self._pending_requests[id(reply)] = ("version_check", local_version)
 
-    def _on_check_finished(self, current, remote):
+    def _on_network_reply(self, reply):
+        """Обработка ответа от QNetworkAccessManager."""
+        reply_id = id(reply)
+        request_info = self._pending_requests.pop(reply_id, None)
+        
+        if not request_info:
+            reply.deleteLater()
+            return
+        
+        request_type, local_version = request_info
+        
+        # Проверяем ошибки сети
+        if reply.error() != QNetworkReply.NetworkError.NoError:
+            error_msg = reply.errorString()
+            logger.error(f"Ошибка сети при проверке обновлений: {error_msg}")
+            self.check_failed.emit(error_msg)
+            reply.deleteLater()
+            return
+        
+        # Читаем ответ
+        data = reply.readAll().data().decode("utf-8").strip()
+        reply.deleteLater()
+        
+        if request_type == "version_check":
+            self._handle_version_check(data, local_version)
+        elif request_type == "changelog":
+            self._handle_changelog(data)
+
+    def _handle_version_check(self, remote_version, local_version):
         """Обработка результата проверки версий."""
-        self._remote_version = remote
-        if self._is_newer(remote, current):
-            logger.info(f"Доступна новая версия: {remote} (текущая: {current})")
-            self.update_available.emit(current, remote)
-            # Скачиваем CHANGELOG для UI
+        if not remote_version:
+            logger.error("Пустой ответ VERSION")
+            self.check_failed.emit("Пустой ответ VERSION")
+            return
+        
+        logger.info(f"Remote версия: {remote_version}, локальная: {local_version}")
+        
+        if self._is_newer(remote_version, local_version):
+            logger.info(f"Доступна новая версия: {remote_version} (текущая: {local_version})")
+            self._remote_version = remote_version
+            self.update_available.emit(local_version, remote_version)
+            # Загружаем CHANGELOG асинхронно
             self._load_changelog()
         else:
-            logger.info(f"Версия актуальна: {current}")
-            self.update_not_found.emit(current)
-
-    def _on_check_failed(self, error):
-        """Обработка ошибки проверки."""
-        self.check_failed.emit(error)
+            logger.info(f"Версия актуальна: {local_version}")
+            self.update_not_found.emit(local_version)
 
     def _load_changelog(self):
-        """Скачивает CHANGELOG.md для отображения в UI."""
+        """Асинхронно скачивает CHANGELOG.md для отображения в UI."""
+        logger.info("Загрузка CHANGELOG")
+        url = QUrl(CHANGELOG_URL)
+        request = QNetworkRequest(url)
+        request.setRawHeader(b"User-Agent", b"LocalAILite-Updater/2.1")
+        
+        reply = self._network_manager.get(request)
+        self._pending_requests[id(reply)] = ("changelog", None)
+
+    def _handle_changelog(self, changelog_text):
+        """Обработка загруженного CHANGELOG."""
         try:
-            req = urllib.request.Request(
-                CHANGELOG_URL,
-                headers={"User-Agent": "LocalAILite-Updater/2.0"},
-            )
-            with urllib.request.urlopen(req, timeout=TIMEOUT_SEC) as resp:
-                changelog_text = resp.read().decode("utf-8")
-            
             # Парсим последний блок
             last_block = self._parse_changelog(changelog_text)
             self.changelog_loaded.emit(last_block)
         except Exception as e:
-            logger.warning(f"Не удалось загрузить CHANGELOG: {e}")
+            logger.warning(f"Не удалось обработать CHANGELOG: {e}")
 
     def _parse_changelog(self, changelog_text: str) -> str:
         """Извлекает последний блок из CHANGELOG.md."""
@@ -298,14 +310,6 @@ class Updater(QObject):
         if self._update_worker is not None and self._update_worker.isRunning():
             self._update_worker.stop()
             logger.info("Обновление отменено пользователем")
-
-    def shutdown(self):
-        """Останавливает все потоки (вызывается при закрытии диалога)."""
-        if self._check_worker is not None and self._check_worker.isRunning():
-            self._check_worker.wait(3000)
-        if self._update_worker is not None and self._update_worker.isRunning():
-            self._update_worker.stop()
-            self._update_worker.wait(3000)
 
     @staticmethod
     def _is_newer(remote, current):

@@ -118,7 +118,7 @@ class MainWindow(QMainWindow):
 
         # Проверка обновлений (через 3 сек после старта)
         from core.updater import Updater
-        self.updater = Updater()
+        self.updater = Updater(self)
         self.updater.update_available.connect(self._on_update_available)
         self.updater.check_failed.connect(
             lambda err: print(f"Updater: проверка не удалась: {err}")
@@ -134,6 +134,13 @@ class MainWindow(QMainWindow):
         file_menu.addAction(exit_action)
         
         
+
+        # Менеджер моделей
+        models_menu = menubar.addMenu("Модели")
+        models_action = QAction("Менеджер моделей...", self)
+        models_action.triggered.connect(self._show_model_manager)
+        models_menu.addAction(models_action)
+
         # Освобождение ресурсов
         tools_menu = menubar.addMenu("Инструменты")
         cleanup_action = QAction("🧹 Освободить ресурсы", self)
@@ -145,6 +152,11 @@ class MainWindow(QMainWindow):
         self.settings_action.triggered.connect(self._show_settings_dialog)
         menubar.addAction(self.settings_action)
     
+    def _show_model_manager(self):
+        from ui.dialogs.model_manager_dialog import ModelManagerDialog
+        dialog = ModelManagerDialog(self.config, self)
+        dialog.exec()
+
     def _show_settings_dialog(self):
         from core.paths_manager import PathsManager
         pm = PathsManager()
@@ -341,7 +353,8 @@ class MainWindow(QMainWindow):
         if "prompt" in state:
             self.shared_bar.set_prompt(state["prompt"])
         if "progress_current" in state and "progress_total" in state:
-            self.shared_bar.set_progress(state["progress_current"], state["progress_total"])
+            colorize = state.get("progress_colorize", False)
+            self.shared_bar.set_progress(state["progress_current"], state["progress_total"], colorize)
         if "status" in state:
             self.shared_bar.set_status(state["status"], state.get("status_color"))
         if "elapsed_seconds" in state:
