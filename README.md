@@ -1,8 +1,8 @@
 # LocalAILite — Локальный AI-ассистент
 
-Приложение для работы с локальными AI-моделями: чат с Ollama + генерация изображений (SDXL/Diffusers) + визуальный редактор.
+Приложение для работы с локальными AI-моделями: чат с Ollama, генерация изображений (SDXL) и визуальный редактор.
 
-**Платформа:** Linux (Manjaro/Arch, Fedora, Ubuntu, openSUSE, Void), PyQt6, Python 3.10-3.12
+**Платформа:** Linux (Manjaro/Arch, Fedora, Ubuntu, openSUSE, Void) · PyQt6 · Python 3.10–3.12
 
 ---
 
@@ -11,264 +11,69 @@
 Мы верим: **локальные нейросети — не роскошь для владельцев мощных GPU.** Чат с LLM и генерация изображений доступны даже на слабом железе — если подойти к делу с умом.
 
 - 🏠 **Всё своё, дома** — модели живут на вашей машине. Без подписок, лимитов токенов и чужих серверов.
-- ✈️ **Работает офлайн** — отключили интернет, а вы продолжаете и чат, и генерацию.
+- ✈ **Работает офлайн** — отключили интернет, а вы продолжаете и чат, и генерацию.
 - 🔒 **Приватность по умолчанию** — промпты, диалоги и картинки не покидают ваш компьютер.
 - ⏸ **Чекпоинты на каждом шаге** — генерацию можно прервать и продолжить точно с того же места, байт в байт. Даже если один шаг идёт десять минут.
 - 🐢→🚀 **Масштабируется** — на слабом железе работает, на мощном — ускоряется. Вариативность не теряется.
 
-Подробнее о философии проекта — в [PHILOSOPHY.md](PHILOSOPHY.md).
+Подробнее о философии проекта — в [Философии проекта](docs/PHILOSOPHY.md).
 
 ---
 
-## 🧩 Статус модулей
+## 🧩 Что умеет
 
-### Оболочка и UI
-
-| Модуль | Версия | Роль |
-|--------|--------|------|
-| main.py | v1.2.0 | Точка входа: QApplication, валидация путей, запуск MainWindow |
-| ui/main_window.py | v1.2.1 | Главное окно: 3 вкладки, меню, OllamaManager, SharedBottomBar |
-| ui/shared_bottom_bar.py | v1.4.0 | Общая нижняя панель: промпт, прогресс, таймер, RAM/CPU, индикатор ресурса с именем модели (㊘ Генерация Ollama · qwen2.5:3b), единая кнопка действия |
-| ui/cleanup_dialog.py | v1.2.1 | Диалог освобождения ресурсов при закрытии (5 шагов) |
-| ui/chat_widget.py | v1.0.0 | QTextBrowser + стриминг токенов + копирование кода |
-| ui/settings_panel.py | v1.0.0 | Правая панель Ollama (модель, temperature, timeout) |
-| ui/dialogs/settings/update_settings_widget.py | v1.5.0 | Вкладка "Обновления" в настройках: версии, CHANGELOG, прогресс, кнопки |
-
-### Вкладки
-
-| Модуль | Версия | Роль |
-|--------|--------|------|
-| ui/tabs/ollama_tab.py | v1.2.0 | Чат: ChatWidget + SettingsPanel + OllamaClient, acquire/release ресурса |
-| ui/tabs/diffusers_tab.py | v1.2.1 | Генерация: preview + settings + DiffusersWorker, управление чекпоинтами и историей |
-| ui/tabs/diffusers_settings_panel.py | v1.4.0 | Настройки Diffusers + реестр моделей v2.0 (editable=False) + список архивных чекпоинтов |
-| ui/tabs/image_prep_tab.py | v1.1.0 | Visual editor: превью + галерея + обработка изображений |
-| ui/tabs/image_prep_panel.py | v1.1.0 | Правая панель Visual editor (пресет, crop mode) |
-
-### Ядро (core/)
-
-| Модуль | Версия | Роль |
-|--------|--------|------|
-| core/chat_manager.py | v1.0.0 | История чата (messages list), экспорт в Markdown |
-| core/ollama_client.py | v1.0.0 | QThread-клиент к Ollama API (/api/chat), стриминг токенов |
-| core/ollama_manager.py | v1.2.0 | Управление ollama serve, проверка RAM, CPU affinity, nice-приоритет |
-| core/diffusers_worker.py | v1.2.0 | QProcess-обёртка для generate_diffusers.py, проверка RAM, CPU limits, history_dir |
-| core/checkpoint_manager.py | v1.0.0 | Чекпоинты: JSON + PT, архивация с timestamp |
-| core/history_manager.py | v1.1.0 | Менеджер истории: data/history/{timestamp}/, метаданные, PNG на каждом шаге |
-| core/resource_manager.py | v1.2.0 | Управление ресурсом (GPU/RAM): acquire/release, 2 арендатора (Ollama, Diffusers) |
-| core/resource_monitor.py | v1.2.1 | Мониторинг RAM/CPU, реальная проверка RAM (psutil.virtual_memory), оценка SDXL 9–11 GB, лимиты, CPU affinity, управление процессами по PID |
-| core/image_processor.py | v1.1.0 | Обработка изображений: resize, crop (center/letterbox/stretch) |
-| core/path_validator.py | v1.1.0 | Валидация venv, моделей, output, Ollama URL, бинарник Ollama, модели Ollama |
-| core/paths_manager.py | v1.4.0 | Единый модуль управления путями: ключи QSettings, дефолты, валидация с уровнями, источники моделей |
-| core/models_registry.py | v1.4.0 | Реестр моделей v2.0: короткое имя ↔ {path, full_name, type}, KNOWN_MODELS, типы hf_cache/file/folder |
-| core/markdown_parser.py | v1.0.0 | Markdown в HTML с адаптацией под системную тему KDE |
-| core/updater.py | v2.0 | Модуль обновлений: проверка версий, скачивание, установка из ветки main, логирование |
-
-### Скрипты (scripts/)
-
-| Модуль | Версия | Роль |
-|--------|--------|------|
-| scripts/generate_diffusers.py | v1.2.1 | CLI-генерация SDXL, callback_on_step_end, history_dir, точный resume (срез timesteps + компенсация init_noise_sigma), защита от перезаписи, оптимизация CPU |
-| scripts/encode_image.py | v1.1.0 | Кодирование изображения в latents через VAE (для img2img) |
-| scripts/test_vae_roundtrip.py | v1.1.0 | Тест VAE encode/decode roundtrip |
-| scripts/compare_images.py | v1.2.1 | Попиксельное сравнение изображений через numpy (для проверки точности resume) |
-
-### Инсталлятор (installer/)
-
-| Модуль | Версия | Роль |
-|--------|--------|------|
-| installer/cli.py | v1.4.0 | Точка входа инсталлятора (уровень 1+2): `python3 installer/cli.py`. Диагностика → data → venv → пути → бинарник Ollama → SDXL venv → модели. Идемпотентен. |
-| installer/detector.py | v1.3.0 | Диагностика железа: ОС, CPU (sse4_2/popcnt/avx/avx2/fma), RAM, GPU, Python, диск. Методы `can_use_pip_pyqt6()`, `detect_system_pyqt6()`. |
-| installer/requirements.py | v1.3.0 | Пороги ресурсов (RAM, CPU, диск) для вердиктов советника. |
-| installer/advisor.py | v1.3.0 | Честные вердикты: что потянет машина (Python/Ollama/SDXL), подбор моделей под железо. |
-| installer/steps/base.py | v1.3.0 | Контракт идемпотентного шага установки (`InstallStep`, `StepStatus`). |
-| installer/steps/step_config.py | v1.3.0 | Создание служебной структуры `data/` (5 папок: history, init_images, logs, pids, previews). |
-| installer/steps/step_env.py | v1.3.0 | Создание venv с **гибридной стратегией PyQt6**: pip на современном CPU, системный из pacman на старом (без sse4_2/popcnt). |
-| installer/steps/step_paths.py | v1.4.0 | Настройка путей (Ollama бинарник/модели, SDXL venv/модели, output). Интерактивный выбор в CLI, предупреждения об объёме. |
-| installer/steps/step_ollama.py | v1.4.0 | Скачивание и установка бинарника Ollama (~2.1 GB). Контракт: путь к файлу бинарника. |
-| installer/steps/step_sdxl_env.py | v1.4.0 | Создание SDXL venv + установка torch/diffusers (~6 GB). CPU-only или CUDA в зависимости от GPU. |
-| installer/steps/step_models.py | v1.4.0 | Скачивание моделей Ollama и SDXL (рекомендации советника). Сканирование manifests/ без запущенного сервера. |
+- 💬 **Чат с локальной моделью** — общайтесь с LLM через Ollama. Стриминг ответов, история, ветвление диалога.
+- 📄 **Вложения в чат** — прикрепляйте файлы прямо к диалогу, модель учтёт их содержимое в ответе.
+- 📊 **Счётчик контекста** — видно, сколько токенов занято и сколько осталось до лимита.
+- 🎨 **Генерация с доступом к сердцу** — SDXL с чекпоинтами на каждом шаге: остановился, продолжил с точного места, откатился, сравнил шаги между собой. История генерации — инструмент эксперимента, а не просто папка с картинками.
+- 🖼 **Визуальный редактор** — подготовка изображений (обрезка, масштаб) перед генерацией.
+- 🔄 **Автообновления** — приложение само проверит и поставит новую версию.
 
 ---
 
-## 📁 Структура проекта
+## 📸 Скриншоты
 
-```
-LocalAILite/
-├── main.py                              # Точка входа
-├── full_context.py                      # Склеенный контекст всех файлов (для LLM)
-├── save_context.sh                      # Скрипт обновления full_context.py
-├── STRUCTURE.md                         # Структура проекта
-├── README.md                            # Этот файл
-├── CHANGELOG.md                         # История версий
-├── PROJECT_MANIFEST.md                  # Контракты и архитектура
-│
-├── core/                                # Ядро (логика без UI)
-│   ├── chat_manager.py                  # История чата
-│   ├── checkpoint_manager.py            # Чекпоинты генерации
-│   ├── diffusers_worker.py              # QProcess-обёртка для generate_diffusers.py
-│   ├── history_manager.py               # Менеджер истории генерации
-│   ├── image_processor.py               # Обработка изображений
-│   ├── markdown_parser.py               # Markdown в HTML
-│   ├── models_registry.py               # Реестр моделей v2.0 (короткие имена, типы)
-│   ├── ollama_client.py                 # QThread-клиент к Ollama API
-│   ├── ollama_manager.py                # Управление ollama serve
-│   ├── path_validator.py                # Валидация путей
-│   ├── paths_manager.py                 # Единый модуль управления путями (v2.0)
-│   ├── resource_manager.py              # Управление ресурсом (GPU/RAM)
-│   └── resource_monitor.py              # Мониторинг RAM/CPU, лимиты
-│
-├── scripts/                             # CLI-скрипты (запускаются в venv)
-│   ├── generate_diffusers.py            # Генерация SDXL
-│   ├── encode_image.py                  # Кодирование изображения в latents
-│   └── test_vae_roundtrip.py            # Тест VAE roundtrip
-│
-├── ui/                                  # PyQt6 интерфейс
-│   ├── main_window.py                   # Главное окно (3 вкладки)
-│   ├── chat_widget.py                   # QTextBrowser + стриминг
-│   ├── cleanup_dialog.py                # Диалог очистки ресурсов
-│   ├── settings_panel.py                # Панель настроек Ollama
-│   ├── shared_bottom_bar.py             # Общая нижняя панель
-│   ├── dialogs/                         # Диалоги настроек
-│   │   ├── paths_dialog.py              # Стартовый диалог путей
-│   │   ├── diffusers_models_dialog.py   # Управление моделями
-│   │   ├── history_save_dialog.py       # Диалог сохранения истории
-│   │   └── settings/
-│   │       ├── settings_dialog.py       # Окно настроек
-│   │       ├── paths_settings_widget.py
-│   │       ├── diffusers_settings_widget.py
-│   │       └── resources_settings_widget.py
-│   └── tabs/                            # Вкладки главного окна
-│       ├── ollama_tab.py                # Чат
-│       ├── diffusers_tab.py             # Генерация
-│       ├── diffusers_settings_panel.py  # Настройки Diffusers
-│       ├── image_prep_tab.py            # Visual editor
-│       └── image_prep_panel.py          # Панель Visual editor
-│
-├── utils/
-│   └── config.py                        # JSON-конфиг (local_config.json) + компонентные пути data/
-│
-├── installer/                           # Инсталлятор (уровень 1+2: бутстрап + полная установка)
-│   ├── cli.py                           # Точка входа: python3 installer/cli.py
-│   ├── detector.py                      # Диагностика железа
-│   ├── requirements.py                  # Пороги ресурсов
-│   ├── advisor.py                       # Вердикты (Python/Ollama/SDXL)
-│   └── steps/                           # Идемпотентные шаги установки
-│       ├── base.py                      # Контракт шага
-│       ├── step_config.py               # Создание data/ (уровень 1)
-│       ├── step_env.py                  # venv + гибридная стратегия PyQt6 (уровень 1)
-│       ├── step_paths.py                # Настройка путей (уровень 2)
-│       ├── step_ollama.py               # Бинарник Ollama ~2.1 GB (уровень 2)
-│       ├── step_sdxl_env.py             # SDXL venv + torch/diffusers ~6 GB (уровень 2)
-│       └── step_models.py               # Скачивание моделей (уровень 2)
-│
-└── data/                                # Рабочие данные (в gitignore)
-    ├── ollama/
-    │   └── models/                      # Модели Ollama (blobs/manifests)
-    ├── diffusers/
-    │   ├── history/                     # История генерации ({timestamp}/step_NNNN.{pt,json})
-    │   ├── init_images/                 # Подготовленные изображения для img2img
-    │   ├── models/                      # Модели SDXL (чекпоинты)
-    │   └── previews/                    # Промежуточные PNG превью
-    ├── image_prep/
-    │   └── presets/                     # Зарезервировано для визуального редактора
-    └── shared/
-        ├── config/                      # local_config.json
-        ├── registry/                    # model_sources.json, models_registry.json
-        ├── logs/                        # Логи (ollama_*.log, diffusers_*.log)
-        └── pids/                        # PID-файлы
-```
+**Чат с локальной моделью** — диалог, вложения, счётчик контекста:
+
+![Чат с Ollama](docs/screenshots/chat_ollama.png)
+
+**Генерация изображений** — SDXL с чекпоинтами на каждом шаге:
+
+![Генерация SDXL](docs/screenshots/SDXL_diffusers.png)
+
+**Менеджер моделей** — список, вердикты по железу, скачивание с прогрессом:
+
+![Менеджер моделей](docs/screenshots/AI_manager.png)
+
+**Инсталлятор** — честные вердикты советника, идемпотентная установка:
+
+![Инсталлятор](docs/screenshots/idempotent_installer.png)
 
 ---
 
-## 🛠️ Запуск
+## 🛠 Установка и запуск
 
-### Установка через инсталлятор
+### Быстрый старт
 
-```
-python3 installer/cli.py
-```
+    python3 installer/cli.py
 
-Инсталлятор (уровень 1+2) последовательно выполняет 8 шагов:
-
-**Уровень 1 — бутстрап** (минимум для запуска приложения):
-- Детектирует железо и честно скажет, что потянет машина
-- Создаст служебную структуру `data/`
-- Создаст venv и установит зависимости (PyQt6, requests, psutil)
-- На старом CPU (без sse4_2/popcnt) использует системный PyQt6 из pacman вместо pip
-
-**Уровень 2 — полная установка** (компоненты и модели):
-- Настроит пути к компонентам (Ollama бинарник/модели, SDXL venv/модели, output)
-- Скачает бинарник Ollama (~2.1 GB)
-- Создаст SDXL venv с torch/diffusers (~6 GB)
-- Скачает рекомендованные модели (Ollama + SDXL)
-
-Идемпотентен: повторный запуск пропустит уже установленное. Каждый шаг уровня 2 спрашивает подтверждение перед установкой.
-
-### Зависимости
-
-```
-pip install PyQt6 requests psutil diffusers torch torchvision torchaudio pillow
-```
+Инсталлятор честно оценит ваше железо, подскажет, что оно потянет, и установит нужные компоненты. Повторный запуск пропустит уже установленное.
 
 ### Запуск приложения
 
-```
-python main.py
-```
+    python main.py
 
-При первом запуске откроется диалог настройки путей (venv, модели, output, Ollama URL).
+При первом запуске откроется диалог настройки путей.
 
 ---
 
-## 🔄 Git-воркфлоу
+## 📚 Документация
 
-- **main** — стабильные релизы
-- **dev** — активная разработка
-
-Формат коммитов: `feat: ...`, `fix: ...`, `refactor: ...`, `docs: ...`, `chore: ...`
-
----
-
-## 📊 Ключевые возможности
-
-- **Модуль обновлений (v2.0)**: автоматическая проверка версий, скачивание и установка из ветки main с логированием. Индикаторы в UI: мигание статусбара + точка в меню. Вкладка "Обновления" в настройках с CHANGELOG
-- **Инсталлятор**: детекция железа, идемпотентная установка (уровень 1+2), гибридная стратегия PyQt6 (pip/system) — `python3 installer/cli.py`
-- **PathsManager**: единый модуль управления путями — дефолты, валидация с уровнями, источники моделей
-- **Реестр моделей v2.0**: короткие имена (SDXL Base 1.0), типы (hf_cache/file/folder), KNOWN_MODELS
-- **Индикатор активной модели**: строка ресурсов показывает модель при генерации
-- **Три режима работы**: чат с Ollama + генерация изображений SDXL + визуальный редактор
-- **Модульная архитектура**: SRP, сигнальная маршрутизация, изолированные потоки
-- **Управление ресурсами**: 2 арендатора (Ollama, Diffusers), только один генерирует одновременно
-- **Чекпоинты генерации**: сохранение/восстановление прогресса (latents + scheduler + generator)
-- **История генерации**: PNG + PT + JSON на каждом шаге в data/history/{timestamp}/
-- **Ollama Manager**: автоматический запуск/остановка сервера, обработка конфликтов портов
-- **SharedBottomBar**: единая нижняя панель для всех табов (промпт, прогресс, таймер, RAM/CPU, индикатор ресурса, единая кнопка действия)
-- **CleanupDialog**: корректное освобождение ресурсов при закрытии (5 шагов)
-- **Markdown-парсер**: подсветка кода, копирование блоков, адаптация под системную тему KDE
-- **Нативная тема KDE**: без артефактов, адаптивный UI
-- **Контроль ресурсов**: проверка RAM перед запуском, CPU affinity, nice-приоритет, env-переменные
-- **Цветовая подсветка статусов**: серый (логи), золотой (статусы), оранжевый (предупреждения), красный (ошибки), зелёный (успех)
-- **Изоляция табов**: каждый таб ведёт свой статус, MainWindow не пишет в SharedBottomBar напрямую
-- **Свободное переключение вкладок**: генерация не прерывается при уходе с таба
-
----
-
-## 📈 Архитектурные принципы
-
-| Принцип | Реализация | Выгода |
-|---------|------------|--------|
-| **UI = View** | Вкладки не делают requests/socket, только отрисовка и маршрутизация сигналов | Устранение UI-фризов, безопасность потоков |
-| **Ядро = Бизнес-логика** | Чекпоинты, Ollama API, генерация вынесены в core/ | Переиспользование, изоляция багов |
-| **QProcess для тяжёлых задач** | Diffusers запускается в отдельном процессе | Изоляция, возможность остановки, логирование |
-| **QThread для сетевых запросов** | OllamaClient работает в отдельном потоке | Не блокирует UI |
-| **Сигнальная шина** | pyqtSignal для навигации и передачи данных между вкладками | Слабая связность, безопасное переключение контекста |
-| **Единый конфиг** | JSON-конфиг local_config.json + QSettings (utils/config.py) | Централизованное управление настройками |
-| **Чекпоинты = атомарность** | JSON + PT, архивация с timestamp | Защита от потери прогресса |
-| **Ресурсы = мониторинг** | ResourceMonitor + ResourceManager, лимиты RAM/CPU | Предотвращение OOM, контроль нагрузки |
-| **Очистка = корректность** | CleanupDialog с 5 шагами при закрытии | Освобождение памяти, остановка процессов |
-| **История = воспроизводимость** | Каждый шаг генерации сохраняется (PNG + PT + JSON) | Возможность экспериментов, сравнения, resume |
-| **Свободное переключение** | Табы не блокируются, блокируется только кнопка "Запустить" | UX: можно смотреть историю пока идёт генерация |
-| **Изоляция статусов** | Каждый таб ведёт свой _bar_state | Чистая архитектура, нет конфликтов |
+- [Структура проекта](docs/STRUCTURE.md) — карта файлов и модулей
+- [Архитектура и контракты](docs/PROJECT_MANIFEST.md) — как устроено внутри
+- [История версий](docs/CHANGELOG.md) — что менялось в релизах
+- [Журнал разработки](docs/WORKLOG.md) — ход работы над проектом
+- [Философия](docs/PHILOSOPHY.md) — почему мы делаем именно так
 
 ---
 
