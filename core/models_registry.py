@@ -349,3 +349,43 @@ def list_installed_ollama_models(config: Config) -> list:
                 models.append(f"{model_name}:{tag}")
     
     return models
+
+
+
+def remove_model_from_registry(config: Config, full_name: str) -> bool:
+    """Удаляет запись модели из реестра models_registry.json по full_name (HF repo id).
+    Используется при удалении Diffusers-моделей.
+
+    Returns:
+        True если запись удалена, False если не найдена или ошибка.
+    """
+    registry_path = config.get_models_registry_path()
+    if not os.path.exists(registry_path):
+        return False
+
+    try:
+        with open(registry_path, 'r', encoding='utf-8') as f:
+            registry = json.load(f)
+    except Exception as e:
+        print(f'[ModelsRegistry] Ошибка чтения реестра: {e}')
+        return False
+
+    # Ищем запись по full_name
+    key_to_remove = None
+    for display_name, info in registry.items():
+        if isinstance(info, dict) and info.get('full_name') == full_name:
+            key_to_remove = display_name
+            break
+
+    if not key_to_remove:
+        return False
+
+    del registry[key_to_remove]
+
+    try:
+        with open(registry_path, 'w', encoding='utf-8') as f:
+            json.dump(registry, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        print(f'[ModelsRegistry] Не удалось сохранить реестр: {e}')
+        return False

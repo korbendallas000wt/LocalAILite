@@ -154,7 +154,7 @@ class MainWindow(QMainWindow):
     
     def _show_model_manager(self):
         from ui.dialogs.model_manager_dialog import ModelManagerDialog
-        dialog = ModelManagerDialog(self.config, self)
+        dialog = ModelManagerDialog(self.config, self.resource_manager, self)
         dialog.exec()
 
     def _show_settings_dialog(self):
