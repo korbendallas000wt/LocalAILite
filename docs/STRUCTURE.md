@@ -16,13 +16,12 @@
     │   ├── CHANGELOG.md                     # История версий (для пользователей)
     │   ├── PROJECT_MANIFEST.md              # Контракты и архитектура
     │   └── PHILOSOPHY.md                    # Философия проекта
-    │
     ├── WORK/                                # Локальные файлы разработки (в .gitignore, не пушатся)
     │   └── HANDOFF.md                       # Передача контекста между сессиями (локально)
     │
     ├── core/                                # Ядро (логика без UI)
     │   ├── chat_manager.py                  # История чата (messages list)
-    │   ├── chat_versions.py                 # Нумерованные чаты (папки, варианты, навигация)
+    │   ├── chat_versions.py                # Нумерованные чаты (папки, варианты, навигация)
     │   ├── model_validator.py               # Проверка целостности моделей (HF cache, single-file, Ollama)
     │   ├── package_validator.py             # Проверка пакетов venv (баг #15: numpy race condition)
     │   ├── path_validator.py                # Валидация venv, моделей, output, Ollama URL/бинарник/модели
@@ -35,13 +34,13 @@
     │   ├── models_registry.py               # Реестр моделей v2.0: короткое имя ↔ {path, full_name, type}
     │   ├── ollama_client.py                 # QThread-клиент к Ollama API (/api/chat)
     │   ├── ollama_manager.py                # Управление ollama serve (старт/стоп/конфликты портов)
-    │   ├── ollama_model_info.py             # Кэш лимитов контекста моделей Ollama (TTL 5 мин, /api/show)
-    │   ├── context_tracker.py               # Трекер контекста (подсчёт токенов, прогресс в статусбар)
-    │   ├── file_reader.py                   # Чтение и валидация файлов для вложений
-    │   ├── model_downloader.py              # Общий контракт скачивания + OllamaDownloader + DiffusersDownloader
+    │   ├── ollama_model_info.py          # Кэш лимитов контекста моделей Ollama (TTL 5 мин, /api/show)
+    │   ├── context_tracker.py             # Трекер контекста (подсчёт токенов, прогресс в статусбар)
+    │   ├── file_reader.py                # Чтение и валидация файлов для вложений
+    │   ├── model_downloader.py         # Общий контракт скачивания + OllamaDownloader + DiffusersDownloader
     │   ├── resource_manager.py              # Управление ресурсом: acquire/release, 2 арендатора
     │   ├── resource_monitor.py              # Мониторинг RAM/CPU, реальная проверка RAM, лимиты, PID
-    │   └── updater.py                       # Модуль обновлений v2.1: проверка версий (асинхронно, QNetworkAccessManager) + скачивание/установка (QThread)
+    │   └── updater.py                     # Модуль обновлений v2.1: проверка версий (асинхронно, QNetworkAccessManager) + скачивание/установка (QThread)
     │
     ├── scripts/                             # CLI-скрипты (запускаются в venv)
     │   ├── generate_diffusers.py            # Генерация SDXL: callback_on_step_end, чекпоинты, точный resume
@@ -58,7 +57,6 @@
     │   ├── shared_bottom_bar.py             # Общая нижняя панель: промпт, прогресс, таймер, RAM/CPU, кнопка
     │   ├── dialogs/                         # Диалоги настроек
     │   │   ├── paths_dialog.py              # Стартовый диалог настройки путей
-    │   │   ├── diffusers_models_dialog.py   # Управление моделями (список, удалить, открыть)
     │   │   ├── history_save_dialog.py       # Диалог сохранения истории генерации
     │   │   ├── folder_dialog.py             # Обёртка над QFileDialog с режимами (navigate/select)
     │   │   ├── model_manager_dialog.py      # Менеджер моделей: список, вердикты по железу, скачивание
@@ -100,20 +98,20 @@
     │
     └── data/                                # Рабочие данные (в gitignore)
         ├── ollama/
-        │   ├── models/                      # Модели Ollama (blobs/manifests)
-        │   └── chats/                       # Сохранённые чаты (JSON/TXT)
+        │   ├── models/                 # Модели Ollama (blobs/manifests)
+        │   └── chats/                  # Сохранённые чаты (JSON/TXT)
         ├── diffusers/
-        │   ├── history/                     # История генерации (timestamp/step_NNNN.{pt,json})
-        │   ├── init_images/                 # Подготовленные изображения
-        │   ├── models/                      # Модели SDXL (чекпоинты)
-        │   └── previews/                    # Промежуточные превью
+        │   ├── history/                # История генерации (timestamp/step_NNNN.{pt,json})
+        │   ├── init_images/            # Подготовленные изображения
+        │   ├── models/                 # Модели SDXL (чекпоинты)
+        │   └── previews/               # Промежуточные превью
         ├── image_prep/
-        │   └── presets/                     # Зарезервировано для визуального редактора
+        │   └── presets/                # Зарезервировано для визуального редактора
         └── shared/
-            ├── config/                      # local_config.json
-            ├── registry/                    # model_sources.json, models_registry.json
-            ├── logs/                        # Логи (ollama_*.log, diffusers_*.log)
-            └── pids/                        # PID-файлы
+            ├── config/                 # local_config.json
+            ├── registry/               # model_sources.json, models_registry.json
+            ├── logs/                   # Логи (ollama_*.log, diffusers_*.log)
+            └── pids/                   # PID-файлы
 
 ## Быстрый доступ к модулям (raw-ссылки)
 
@@ -166,6 +164,8 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/file_reader.py
 - **model_downloader.py** — общий контракт скачивания (прогресс, отмена, верификация) + OllamaDownloader (QProcess) + DiffusersDownloader (huggingface_hub/requests)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/model_downloader.py
+- **core/model_lifecycle.py** — управление жизненным циклом моделей (удаление, проверка целостности)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/model_lifecycle.py
 - **resource_manager.py** — управление ресурсом: acquire/release, 2 арендатора
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/resource_manager.py
 - **resource_monitor.py** — мониторинг RAM/CPU, лимиты, PID
@@ -232,8 +232,6 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/shared_bottom_bar.py
 - **dialogs/paths_dialog.py** — стартовый диалог настройки путей
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/paths_dialog.py
-- **dialogs/diffusers_models_dialog.py** — управление моделями (список, удалить, открыть)
-  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/diffusers_models_dialog.py
 - **dialogs/history_save_dialog.py** — диалог сохранения истории генерации
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/history_save_dialog.py
 - **dialogs/folder_dialog.py** — обёртка над QFileDialog с режимами (navigate/select)
