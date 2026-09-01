@@ -16,13 +16,13 @@
     │   ├── CHANGELOG.md                     # История версий (для пользователей)
     │   ├── PROJECT_MANIFEST.md              # Контракты и архитектура
     │   └── PHILOSOPHY.md                    # Философия проекта
-        │
+    │
     ├── WORK/                                # Локальные файлы разработки (в .gitignore, не пушатся)
     │   └── HANDOFF.md                       # Передача контекста между сессиями (локально)
     │
     ├── core/                                # Ядро (логика без UI)
     │   ├── chat_manager.py                  # История чата (messages list)
-    │   ├── chat_versions.py                # Нумерованные чаты (папки, варианты, навигация)
+    │   ├── chat_versions.py                 # Нумерованные чаты (папки, варианты, навигация)
     │   ├── model_validator.py               # Проверка целостности моделей (HF cache, single-file, Ollama)
     │   ├── package_validator.py             # Проверка пакетов venv (баг #15: numpy race condition)
     │   ├── path_validator.py                # Валидация venv, моделей, output, Ollama URL/бинарник/модели
@@ -35,13 +35,13 @@
     │   ├── models_registry.py               # Реестр моделей v2.0: короткое имя ↔ {path, full_name, type}
     │   ├── ollama_client.py                 # QThread-клиент к Ollama API (/api/chat)
     │   ├── ollama_manager.py                # Управление ollama serve (старт/стоп/конфликты портов)
-    │   ├── ollama_model_info.py          # Кэш лимитов контекста моделей Ollama (TTL 5 мин, /api/show)
-    │   ├── context_tracker.py             # Трекер контекста (подсчёт токенов, прогресс в статусбар)
-    │   ├── file_reader.py                # Чтение и валидация файлов для вложений
-    │   ├── model_downloader.py         # Общий контракт скачивания + OllamaDownloader + DiffusersDownloader
+    │   ├── ollama_model_info.py             # Кэш лимитов контекста моделей Ollama (TTL 5 мин, /api/show)
+    │   ├── context_tracker.py               # Трекер контекста (подсчёт токенов, прогресс в статусбар)
+    │   ├── file_reader.py                   # Чтение и валидация файлов для вложений
+    │   ├── model_downloader.py              # Общий контракт скачивания + OllamaDownloader + DiffusersDownloader
     │   ├── resource_manager.py              # Управление ресурсом: acquire/release, 2 арендатора
     │   ├── resource_monitor.py              # Мониторинг RAM/CPU, реальная проверка RAM, лимиты, PID
-    │   └── updater.py                     # Модуль обновлений v2.1: проверка версий (асинхронно, QNetworkAccessManager) + скачивание/установка (QThread)
+    │   └── updater.py                       # Модуль обновлений v2.1: проверка версий (асинхронно, QNetworkAccessManager) + скачивание/установка (QThread)
     │
     ├── scripts/                             # CLI-скрипты (запускаются в venv)
     │   ├── generate_diffusers.py            # Генерация SDXL: callback_on_step_end, чекпоинты, точный resume
@@ -68,7 +68,7 @@
     │   │       ├── chat_settings_widget.py          # Вкладка Чат (формат сохранения, папка)
     │   │       ├── diffusers_settings_widget.py     # Вкладка Diffusers
     │   │       ├── resources_settings_widget.py     # Вкладка Ресурсы
- │   │       └── update_settings_widget.py        # Вкладка Обновления (v2.0)
+    │   │       └── update_settings_widget.py        # Вкладка Обновления (v2.0)
     │   └── tabs/                            # Вкладки главного окна
     │       ├── ollama_tab.py                # Чат: ChatWidget + SettingsPanel + OllamaClient
     │       ├── diffusers_tab.py             # Генерация: preview + settings + DiffusersWorker
@@ -100,20 +100,20 @@
     │
     └── data/                                # Рабочие данные (в gitignore)
         ├── ollama/
-        │   ├── models/                 # Модели Ollama (blobs/manifests)
-        │   └── chats/                  # Сохранённые чаты (JSON/TXT)
+        │   ├── models/                      # Модели Ollama (blobs/manifests)
+        │   └── chats/                       # Сохранённые чаты (JSON/TXT)
         ├── diffusers/
-        │   ├── history/                # История генерации (timestamp/step_NNNN.{pt,json})
-        │   ├── init_images/            # Подготовленные изображения
-        │   ├── models/                 # Модели SDXL (чекпоинты)
-        │   └── previews/               # Промежуточные превью
+        │   ├── history/                     # История генерации (timestamp/step_NNNN.{pt,json})
+        │   ├── init_images/                 # Подготовленные изображения
+        │   ├── models/                      # Модели SDXL (чекпоинты)
+        │   └── previews/                    # Промежуточные превью
         ├── image_prep/
-        │   └── presets/                # Зарезервировано для визуального редактора
+        │   └── presets/                     # Зарезервировано для визуального редактора
         └── shared/
-            ├── config/                 # local_config.json
-            ├── registry/               # model_sources.json, models_registry.json
-            ├── logs/                   # Логи (ollama_*.log, diffusers_*.log)
-            └── pids/                   # PID-файлы
+            ├── config/                      # local_config.json
+            ├── registry/                    # model_sources.json, models_registry.json
+            ├── logs/                        # Логи (ollama_*.log, diffusers_*.log)
+            └── pids/                        # PID-файлы
 
 ## Быстрый доступ к модулям (raw-ссылки)
 
