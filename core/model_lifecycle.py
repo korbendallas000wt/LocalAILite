@@ -200,6 +200,19 @@ def validate_installed_model(model_name_or_path: str, section: str, config) -> d
                     model_path = info.get("path", "")
                     break
 
+
+        # Для HF cache путь может вести на snapshots/{hash} — поднимаем до корня
+        # Пример: /path/models--org--name/snapshots/{hash}
+        #   → нужно: /path/models--org--name
+        if "snapshots" in model_path:
+            parts = model_path.split(os.sep)
+            try:
+                snap_idx = parts.index("snapshots")
+                if snap_idx >= 1:
+                    model_path = os.sep.join(parts[:snap_idx])
+            except ValueError:
+                pass
+
         if not model_path or not os.path.exists(model_path):
             return {
                 "success": False,

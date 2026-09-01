@@ -432,20 +432,30 @@ class ModelManagerDialog(QDialog):
         result = validate_installed_model(source, section, self.config)
 
         if not result["success"]:
-            QMessageBox.warning(
-                self, "Проверка не удалась",
-                f"Модель: {name}\n\nОшибки:\n" + "\n".join(result["errors"])
-            )
+            title = "Проверка не удалась"
+            msg = f"Модель: {name}\n\nОшибки:\n" + "\n".join(result["errors"])
+            icon = QMessageBox.Icon.Warning
         elif result["valid"]:
+            title = "Проверка целостности"
             msg = f"✅ Модель {name} цела и валидна"
             if result["warnings"]:
                 msg += "\n\nПредупреждения:\n" + "\n".join(result["warnings"])
-            QMessageBox.information(self, "Проверка целостности", msg)
+            icon = QMessageBox.Icon.Information
         else:
-            QMessageBox.critical(
-                self, "Модель повреждена",
-                f"Модель: {name}\n\nОшибки:\n" + "\n".join(result["errors"])
-            )
+            title = "Модель повреждена"
+            msg = f"Модель: {name}\n\nОшибки:\n" + "\n".join(result["errors"])
+            icon = QMessageBox.Icon.Critical
+
+        # Явное создание вместо статических методов
+        # DontUseNativeDialog — фикс краша в деструкторе на KDE Plasma
+        # (Qt пытается скрыть нативный диалог после уничтожения box → NULL pointer)
+        box = QMessageBox(self)
+        box.setOption(QMessageBox.Option.DontUseNativeDialog)
+        box.setIcon(icon)
+        box.setWindowTitle(title)
+        box.setText(msg)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.exec()
 
         self._status_label.setVisible(False)
 
