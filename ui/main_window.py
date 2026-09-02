@@ -135,11 +135,10 @@ class MainWindow(QMainWindow):
         
         
 
-        # Менеджер моделей
-        models_menu = menubar.addMenu("Модели")
-        models_action = QAction("Менеджер моделей...", self)
-        models_action.triggered.connect(self._show_model_manager)
-        models_menu.addAction(models_action)
+        # Менеджер моделей — прямое действие (как Настройки, без подменю)
+        self.models_action = QAction("Модели", self)
+        self.models_action.triggered.connect(self._show_model_manager)
+        menubar.addAction(self.models_action)
 
         # Освобождение ресурсов
         tools_menu = menubar.addMenu("Инструменты")
