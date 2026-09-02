@@ -36,9 +36,18 @@ class SharedBottomBar(QWidget):
         left_layout.setSpacing(5)
 
         # Статус
+        status_row = QHBoxLayout()
         self.status_label = QLabel("Готово")
         self.status_label.setWordWrap(False)
-        left_layout.addWidget(self.status_label)
+        status_row.addWidget(self.status_label, 1)
+
+        self.context_label = QLabel("Контекст")
+        status_row.addWidget(self.context_label)
+
+        self.context_symbol_label = QLabel("◉")
+        status_row.addWidget(self.context_symbol_label)
+
+        left_layout.addLayout(status_row)
 
         # Прогрессбар
         self.progress_bar = QProgressBar()
@@ -135,8 +144,11 @@ class SharedBottomBar(QWidget):
             pal = self.progress_bar.palette()
             pal.setColor(QPalette.ColorRole.Highlight, color)
             self.progress_bar.setPalette(pal)
+            # Индикатор Контекст ◉ — красится во всех темах
+            self.context_symbol_label.setStyleSheet(f"color: {color.name()};")
         else:
             self.progress_bar.setPalette(QApplication.palette())
+            self.context_symbol_label.setStyleSheet("")
 
     def set_timer_display(self, seconds: int):
         """Устанавливает отображение таймера (в секундах)"""
