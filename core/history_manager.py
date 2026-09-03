@@ -61,11 +61,12 @@ def list_history() -> list[dict]:
         list[dict]: [{"timestamp": str, "path": str, "display_name": str}, ...]
     """
     histories = []
-    if not os.path.exists(HISTORY_DIR):
+    history_dir = get_history_dir()
+    if not os.path.exists(history_dir):
         return histories
     
-    for item in os.listdir(HISTORY_DIR):
-        item_path = os.path.join(HISTORY_DIR, item)
+    for item in os.listdir(history_dir):
+        item_path = os.path.join(history_dir, item)
         if os.path.isdir(item_path):
             # Формат: 2026-07-05_14-30-45 → 2026-07-05 14:30:45
             display_name = f"{item[:10].replace('-', '.')} {item[11:19].replace('-', ':')}"

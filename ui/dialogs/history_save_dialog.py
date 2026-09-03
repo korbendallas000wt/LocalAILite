@@ -89,6 +89,12 @@ class HistorySaveDialog(QDialog):
             self.save_without_previews.emit()
         self.accept()
     
+    def reject(self):
+        """Закрытие диалога крестиком или Esc — удаляем историю"""
+        self._timer.stop()
+        self.delete_history.emit()
+        super().reject()
+    
     def _on_no(self):
         """Кнопка Нет"""
         self._timer.stop()

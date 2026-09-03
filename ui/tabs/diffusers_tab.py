@@ -325,6 +325,9 @@ class DiffusersTab(QWidget):
     
     def _on_error(self, error_msg):
         """Ошибка генерации"""
+        # Останавливаем таймер (фикс бага B1: таймер шёл после OOM)
+        self._generation_timer.stop()
+        
         # Освобождаем ресурс (КРИТИЧНО!)
         self.resource_manager.release_resource()
         

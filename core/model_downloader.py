@@ -11,7 +11,7 @@
     downloader.start()
 """
 
-from PyQt6.QtCore import QObject, pyqtSignal, QProcess, QProcessEnvironment
+from PyQt6.QtCore import QObject, pyqtSignal, QProcess, QProcessEnvironment, QTimer
 import os
 import psutil
 import re
@@ -34,6 +34,58 @@ class ModelDownloader(QObject):
         self._is_cancelled = False
         self._last_percent = -1
     
+
+    def _get_folder_size(self, folder_path: str) -> int:
+        """Рекурсивно вычисляет размер папки в байтах."""
+        total = 0
+        if not folder_path or not os.path.exists(folder_path):
+            return total
+        try:
+            for dirpath, dirnames, filenames in os.walk(folder_path):
+                for f in filenames:
+                    fp = os.path.join(dirpath, f)
+                    try:
+                        total += os.path.getsize(fp)
+                    except (OSError, IOError):
+                        pass
+        except (OSError, IOError):
+            pass
+        return total
+    
+    def _start_size_monitoring(self):
+        """Запускает периодическую проверку размера папки модели."""
+        if not self._repo_id or not self._models_path:
+            return
+        
+        # Формируем имя папки HF cache: models--org--name
+        self._model_folder_name = "models--" + self._repo_id.replace("/", "--")
+        
+        # Создаём таймер проверки размера (каждые 2 секунды)
+        self._size_check_timer = QTimer(self)
+        self._size_check_timer.timeout.connect(self._check_download_progress)
+        self._size_check_timer.start(2000)
+    
+    def _check_download_progress(self):
+        """Проверяет размер папки модели и обновляет прогресс."""
+        if not self._models_path or not self._model_folder_name:
+            return
+        
+        model_folder = os.path.join(self._models_path, self._model_folder_name)
+        current_size = self._get_folder_size(model_folder)
+        
+        # Вычисляем процент от ожидаемого размера
+        expected_bytes = self._model_size_gb * (1024 ** 3)
+        if expected_bytes > 0:
+            pct = min(90, int((current_size / expected_bytes) * 85))  # Максимум 90% (остальное — верификация)
+            current_gb = current_size / (1024 ** 3)
+            self._report_progress(10 + pct, f"SDXL: {current_gb:.1f} / {self._model_size_gb:.1f} GB")
+    
+    def _stop_size_monitoring(self):
+        """Останавливает мониторинг размера папки."""
+        if self._size_check_timer:
+            self._size_check_timer.stop()
+            self._size_check_timer = None
+
     def start(self):
         """Запускает скачивание (переопределяется в наследниках)."""
         raise NotImplementedError
@@ -280,6 +332,19 @@ class DiffusersDownloader(ModelDownloader):
         self._models_path = None
         self._repo_id = None
         self._model_size_gb = 7.0  # Дефолт для SDXL
+        self._size_check_timer = None
+        self._model_folder_name = None  # Для HF cache: models--org--name
+    
+    def cancel(self):
+        """Отменяет скачивание и останавливает мониторинг."""
+        self._is_cancelled = True
+        self._stop_size_monitoring()
+        if self._process:
+            self._process.terminate()
+            self._process.waitForFinished(3000)
+            if self._process.state() != QProcess.ProcessState.NotRunning:
+                self._process.kill()
+        self.download_cancelled.emit()
     
     def set_repo_id(self, repo_id: str):
         """Устанавливает HuggingFace repo_id (например, 'stabilityai/stable-diffusion-xl-base-1.0')."""
@@ -327,6 +392,9 @@ class DiffusersDownloader(ModelDownloader):
             return
         
         self._report_progress(5, f"Запуск скачивания {self._repo_id}...")
+        
+        # Запускаем мониторинг размера папки
+        self._start_size_monitoring()
         
         # Создаём скрипт для скачивания через huggingface_hub
         script = f"""
@@ -425,6 +493,7 @@ except Exception as e:
             return
         
         self._is_running = False
+        self._stop_size_monitoring()
         
         if self._is_cancelled:
             self.download_finished.emit(False, "Скачивание отменено пользователем")

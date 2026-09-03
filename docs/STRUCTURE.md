@@ -17,7 +17,9 @@
     │   ├── PROJECT_MANIFEST.md              # Контракты и архитектура
     │   └── PHILOSOPHY.md                    # Философия проекта
     ├── WORK/                                # Локальные файлы разработки (в .gitignore, не пушатся)
-    │   └── HANDOFF.md                       # Передача контекста между сессиями (локально)
+    │   ├── HANDOFF.md                       # Передача сессии: поток Кодера
+│   ├── BRIEF.md                         # Передача сессии: поток Эксперта
+│   └── RELAYRACE.md                     # Передача сессии: поток Доксрайтера
     │
     ├── core/                                # Ядро (логика без UI)
     │   ├── chat_manager.py                  # История чата (messages list)
@@ -57,7 +59,6 @@
     │   ├── shared_bottom_bar.py             # Общая нижняя панель: промпт, прогресс, таймер, RAM/CPU, кнопка
     │   ├── dialogs/                         # Диалоги настроек
     │   │   ├── paths_dialog.py              # Стартовый диалог настройки путей
-    │   │   ├── diffusers_models_dialog.py   # Управление моделями (список, удалить, открыть)
     │   │   ├── history_save_dialog.py       # Диалог сохранения истории генерации
     │   │   ├── folder_dialog.py             # Обёртка над QFileDialog с режимами (navigate/select)
     │   │   ├── model_manager_dialog.py      # Менеджер моделей: список, вердикты по железу, скачивание
@@ -165,6 +166,8 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/file_reader.py
 - **model_downloader.py** — общий контракт скачивания (прогресс, отмена, верификация) + OllamaDownloader (QProcess) + DiffusersDownloader (huggingface_hub/requests)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/model_downloader.py
+- **core/model_lifecycle.py** — управление жизненным циклом моделей (удаление, проверка целостности)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/model_lifecycle.py
 - **resource_manager.py** — управление ресурсом: acquire/release, 2 арендатора
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/resource_manager.py
 - **resource_monitor.py** — мониторинг RAM/CPU, лимиты, PID
@@ -231,8 +234,6 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/shared_bottom_bar.py
 - **dialogs/paths_dialog.py** — стартовый диалог настройки путей
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/paths_dialog.py
-- **dialogs/diffusers_models_dialog.py** — управление моделями (список, удалить, открыть)
-  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/diffusers_models_dialog.py
 - **dialogs/history_save_dialog.py** — диалог сохранения истории генерации
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/history_save_dialog.py
 - **dialogs/folder_dialog.py** — обёртка над QFileDialog с режимами (navigate/select)
@@ -288,6 +289,20 @@ https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/s
     Только один модуль может генерировать одновременно (кнопка "Запустить" блокируется).
     Табы переключаются свободно, выгрузка неактивных модулей через unload() (не останавливает активную генерацию).
     ResourceMonitor проверяет реальную RAM перед запуском (psutil.virtual_memory), применяет CPU affinity и nice-приоритет.
+
+## Потоки разработки и передача сессий
+
+Над проектом работают три параллельных потока, у каждого — своя роль модели:
+
+| Поток | Роль | Передача сессии |
+|---|---|---|
+| Кодер | воплощает планы в код | `WORK/HANDOFF.md` |
+| Эксперт | теория, обсуждение планов и идей | `WORK/BRIEF.md` |
+| Доксрайтер | документация проекта (docs/) | `WORK/RELAYRACE.md` |
+
+- **Общий файл всех потоков** — `docs/WORKLOG.md`: идеи, проблемы, баги, фиксы, изменения. Пушится в dev; актуальная версия прикреплена к проекту перед любой новой сессией.
+- **Файлы передачи — локальные** (в git не попадают), каждый читает и пишет только свой.
+- **Передача обновляется только при исчерпании контекстного окна** — модель чувствует это сама.
 
 ## Примечание для модели
 

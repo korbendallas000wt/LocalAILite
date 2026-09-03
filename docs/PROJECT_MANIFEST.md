@@ -25,9 +25,8 @@
 | ui/tabs/diffusers_settings_panel.py | v1.0.0 | Настройки Diffusers. Модель, scheduler, steps, cfg, size, seed, negative_prompt, список архивных чекпоинтов. |
 | ui/tabs/image_prep_panel.py | v1.1.0 | Правая панель Visual editor. Пресет разрешения, режим обрезки (center/letterbox/stretch). |
 | ui/dialogs/paths_dialog.py | v1.0.0 | Стартовый диалог. Настройка путей (venv, модели, output, Ollama URL) с валидацией. |
-| ui/dialogs/diffusers_models_dialog.py | v1.0.0 | Управление моделями. Список, удаление, открытие папки, ссылки на ресурсы (HuggingFace, CivitAI). |
 | ui/dialogs/history_save_dialog.py | v1.2.0 | Диалог сохранения истории генерации (чекбокс создания превью, таймер авто-сохранения). |
-| ui/dialogs/model_manager_dialog.py | v1.0.0 | Менеджер моделей: список доступных (с override через available_models.json), фильтр по железу, вердикты по ОЗУ, скачивание с прогрессом и отменой. Одна загрузка за раз. |
+| ui/dialogs/model_manager_dialog.py | v2.0.0 | Менеджер моделей: список доступных/установленных, фильтр по железу, трёхуровневые вердикты по RAM (✅/⚠/❌), скачивание с прогрессом, удаление, проверка целостности, блокировка при активной генерации. Одна загрузка за раз. |
 | ui/dialogs/settings/settings_dialog.py | v1.0.0 | Окно настроек. Вкладки (Общие, Diffusers, Ресурсы). |
 | ui/dialogs/settings/paths_settings_widget.py | v1.0.0 | Вкладка Общие. Настройки путей с валидацией в реальном времени. |
 | ui/dialogs/settings/chat_settings_widget.py | v1.0.0 | Вкладка Чат. Формат сохранения (JSON/TXT), папка чатов (через FolderDialog mode=select), автозаголовок через LLM. |
@@ -45,6 +44,7 @@
 | core/context_tracker.py | v1.0.0 | Трекер контекста: подсчёт токенов в промпте и истории, эмиссия прогресса в SharedBottomBar. |
 | core/file_reader.py | v1.0.0 | Чтение и валидация файлов для вложений (размер, тип, кодировка). |
 | core/model_downloader.py | v1.0.0 | Общий контракт скачивания (прогресс, отмена, верификация) + OllamaDownloader (QProcess, ollama pull) + DiffusersDownloader (huggingface_hub/requests). |
+| core/model_lifecycle.py | v1.0.0 | Управление жизненным циклом моделей: удаление (ollama rm, rmtree папки hf_cache), проверка целостности через model_validator.py, интеграция с resource_manager (блокировка при генерации). |
 | core/ollama_manager.py | v1.2.0 | Управление процессом ollama serve (старт/стоп), проверка порта 11434, обработка конфликтов, логирование, PID-файлы, проверка RAM, CPU affinity, nice-приоритет. |
 | core/diffusers_worker.py | v1.2.0 | QProcess-обёртка для scripts/generate_diffusers.py, парсинг JSON-вывода, логирование, сигналы (step_updated, generation_finished, error_occurred). Проверка RAM, CPU limits, history_dir. Адаптация под diffusers 0.39+ (callback_on_step_end). |
 | core/checkpoint_manager.py | v1.0.0 | Менеджер чекпоинтов генерации. Сохранение latents + scheduler + generator в PT, метаданные в JSON, архивация с timestamp, загрузка из архива. |

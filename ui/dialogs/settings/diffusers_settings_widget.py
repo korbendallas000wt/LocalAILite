@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QComboBox,
-                              QCheckBox, QPushButton, QLabel)
+                              QCheckBox, QLabel)
 from PyQt6.QtCore import Qt
 
 class DiffusersSettingsWidget(QWidget):
@@ -31,14 +31,6 @@ class DiffusersSettingsWidget(QWidget):
         form.addRow("", self.safety_check)
 
         layout.addLayout(form)
-
-        # Кнопка управления моделями
-        layout.addSpacing(20)
-        self.models_btn = QPushButton("📦 Управление моделями...")
-        self.models_btn.setToolTip("Скачать, удалить или обновить модели Diffusers")
-        self.models_btn.clicked.connect(self._on_manage_models)
-        layout.addWidget(self.models_btn)
-
         layout.addStretch()
 
         # Загружаем настройки
@@ -53,9 +45,3 @@ class DiffusersSettingsWidget(QWidget):
         """Сохраняет настройки из UI в конфиг"""
         self.config.set("sdxl/device", self.device_combo.currentText())
         self.config.set("sdxl/no_safety_checker", str(self.safety_check.isChecked()).lower())
-
-    def _on_manage_models(self):
-        """Открывает диалог управления моделями"""
-        from ui.dialogs.diffusers_models_dialog import DiffusersModelsDialog
-        dialog = DiffusersModelsDialog(self.config, self)
-        dialog.exec()

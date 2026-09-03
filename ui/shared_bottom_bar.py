@@ -123,7 +123,9 @@ class SharedBottomBar(QWidget):
         self.progress_bar.setRange(0, max(total, 0))
         self.progress_bar.setValue(current)
 
-        # Подкраска на пределах — через палитру, чтобы не ломать нативный скин
+        # Подкраска ФОНА на пределах — через палитру роли Window.
+        # Работает на Breeze (в отличие от Highlight), не ломает нативный стиль.
+        # Норма (≤70%) — нативный вид; подкраска только при приближении к лимиту.
         if colorize and total > 0:
             percent = current / total
             if percent >= 0.9:
@@ -131,10 +133,13 @@ class SharedBottomBar(QWidget):
             elif percent >= 0.7:
                 color = QColor("#f0ad4e")  # оранжевый — внимание
             else:
-                color = QColor("#5cb85c")  # зелёный — норма
-            pal = self.progress_bar.palette()
-            pal.setColor(QPalette.ColorRole.Highlight, color)
-            self.progress_bar.setPalette(pal)
+                color = None  # норма — нативный вид, как у остальных табов
+            if color:
+                pal = QApplication.palette()
+                pal.setColor(QPalette.ColorRole.Window, color)
+                self.progress_bar.setPalette(pal)
+            else:
+                self.progress_bar.setPalette(QApplication.palette())
         else:
             self.progress_bar.setPalette(QApplication.palette())
 

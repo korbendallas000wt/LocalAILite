@@ -135,11 +135,10 @@ class MainWindow(QMainWindow):
         
         
 
-        # Менеджер моделей
-        models_menu = menubar.addMenu("Модели")
-        models_action = QAction("Менеджер моделей...", self)
-        models_action.triggered.connect(self._show_model_manager)
-        models_menu.addAction(models_action)
+        # Менеджер моделей — прямое действие (как Настройки, без подменю)
+        self.models_action = QAction("Модели", self)
+        self.models_action.triggered.connect(self._show_model_manager)
+        menubar.addAction(self.models_action)
 
         # Освобождение ресурсов
         tools_menu = menubar.addMenu("Инструменты")
@@ -154,7 +153,7 @@ class MainWindow(QMainWindow):
     
     def _show_model_manager(self):
         from ui.dialogs.model_manager_dialog import ModelManagerDialog
-        dialog = ModelManagerDialog(self.config, self)
+        dialog = ModelManagerDialog(self.config, self.resource_manager, self)
         dialog.exec()
 
     def _show_settings_dialog(self):
@@ -360,11 +359,23 @@ class MainWindow(QMainWindow):
         if "elapsed_seconds" in state:
             self.shared_bar.set_timer_display(state["elapsed_seconds"])
         
-        if state.get("is_running"):
-            self.shared_bar.set_running_state(True)
-
+        # ФИКС B2: подписью кнопки действия владеет арендатор ресурса.
+        # Пока ресурс занят, смена режима/вкладки в НЕ-владеющем табе
+        # не должна сбрасывать кнопку — её состояние диктует владелец.
+        if self.resource_manager.is_resource_busy():
+            owner = self.resource_manager.get_resource_owner()
+            tab_to_module = {
+                getattr(self, "ollama_tab", None): "ollama",
+                getattr(self, "diffusers_tab", None): "diffusers",
+            }
+            if tab_to_module.get(sender) == owner:
+                # Таб-владелец сам управляет кнопкой (включая сброс при завершении)
+                self.shared_bar.set_running_state(bool(state.get("is_running")))
+            else:
+                # Ресурс занят другим модулем — удерживаем «Остановить»
+                self.shared_bar.set_running_state(True)
         else:
-            self.shared_bar.set_running_state(False)
+            self.shared_bar.set_running_state(bool(state.get("is_running")))
     def _set_active_tab_status(self, message: str, color: str = "#DAA520"):
         """Устанавливает статус через активный таб (не напрямую в SharedBottomBar)"""
         active_tab = self.tabs.currentWidget()
