@@ -48,7 +48,8 @@
     │   ├── generate_diffusers.py            # Генерация SDXL: callback_on_step_end, чекпоинты, точный resume
     │   ├── compare_images.py                # Попиксельное сравнение изображений (numpy)
     │   ├── encode_image.py                  # Кодирование изображения в latents через VAE (для img2img)
-    │   └── test_vae_roundtrip.py            # Тест VAE encode/decode roundtrip
+    │   ├── test_vae_roundtrip.py            # Тест VAE encode/decode roundtrip
+    │   └── test_downloader.py               # Тестовый скрипт для отладки DiffusersDownloader (живой прогрессбар)
     │
     ├── ui/                                  # PyQt6 интерфейс
     │   ├── main_window.py                   # Главное окно: 3 вкладки, меню, OllamaManager, SharedBottomBar
@@ -217,6 +218,8 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/scripts/encode_image.py
 - **test_vae_roundtrip.py** — тест VAE encode/decode roundtrip
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/scripts/test_vae_roundtrip.py
+- **test_downloader.py** — тестовый скрипт для отладки DiffusersDownloader (живой прогрессбар)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/scripts/test_downloader.py
 
 ### ui/ — PyQt6 интерфейс
 
