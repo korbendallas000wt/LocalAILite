@@ -244,37 +244,120 @@ def _estimate_min_ram_gb(size_gb: float, model_type: str) -> int:
     return 16
 
 
-def _fill_model_meta(model_info: dict):
+def _get_library_description(config, ref: str) -> str:
+    """Ищет описание модели в справочнике библиотеки Ollama.
+    
+    Читает data/shared/registry/ollama_library.json, ищет по базовому имени
+    (без тега: llama3.1:8b -> llama3.1). Возвращает description_en или пустую строку.
+    """
+    try:
+        registry_dir = os.path.dirname(config.get_models_registry_path())
+        lib_path = os.path.join(registry_dir, "ollama_library.json")
+        if not os.path.isfile(lib_path):
+            return ""
+        with open(lib_path, "r", encoding="utf-8") as f:
+            library = json.load(f)
+        # Извлекаем базовое имя (до двоеточия)
+        base_name = ref.split(":")[0] if ":" in ref else ref
+        for entry in library:
+            if entry.get("name") == base_name or entry.get("source") == base_name:
+                return entry.get("description_en", "")
+        return ""
+    except Exception:
+        return ""
+
+
+def _ollama_description_from_manifest(manifest_path: str,
+                                      ollama_models_path: str) -> str:
+    """Извлекает описание модели из манифеста Ollama.
+
+    Читает config-слой (mediaType: application/vnd.docker.container.image.v1+json),
+    извлекает поля model_family, model_type, file_type и формирует читаемое описание.
+    Пример: "Qwen2, 1.5B параметров, квантование Q4_K_M"
+    """
+    try:
+        with open(manifest_path, "r") as f:
+            manifest = json.load(f)
+        config_digest = manifest.get("config", {}).get("digest", "")
+        if not config_digest:
+            return ""
+        blob_name = config_digest.replace(":", "-")
+        config_blob = os.path.join(ollama_models_path, "blobs", blob_name)
+        if not os.path.isfile(config_blob):
+            return ""
+        with open(config_blob, "r") as f:
+            config_json = json.load(f)
+        family = config_json.get("model_family", "")
+        model_type = config_json.get("model_type", "")
+        file_type = config_json.get("file_type", "")
+        parts = []
+        if family:
+            parts.append(family.capitalize())
+        if model_type:
+            parts.append(f"{model_type} параметров")
+        if file_type:
+            parts.append(f"квантование {file_type}")
+        return ", ".join(parts) if parts else ""
+    except Exception:
+        return ""
+
+
+def _fill_model_meta(config, model_info: dict):
     """Дописывает в meta размер, оценку ОЗУ и описание, если их нет."""
     meta = model_info.setdefault("meta", {})
-    if meta.get("size_gb"):
-        return
-
     model_type = model_info.get("type")
     installed = model_info.get("paths", {}).get("installed", "")
 
-    size_gb = 0.0
-    if model_type == "ollama":
-        # installed ведёт на файл манифеста
-        if installed and os.path.isfile(installed):
-            size_gb = _ollama_size_from_manifest(installed)
-    else:
-        if installed and os.path.isfile(installed):
-            # single-file модель
-            size_gb = round(os.path.getsize(installed) / (1024**3), 1)
-        elif installed and os.path.isdir(installed):
-            size_gb = _diffusers_size_from_blobs(installed)
-
-    if size_gb > 0:
-        meta["size_gb"] = size_gb
-        if not meta.get("min_ram_gb"):
-            meta["min_ram_gb"] = _estimate_min_ram_gb(size_gb, model_type)
-
-    if not meta.get("description"):
+    # 1. Размер и ОЗУ — только если их нет
+    if not meta.get("size_gb"):
+        size_gb = 0.0
         if model_type == "ollama":
-            meta["description"] = "Модель Ollama, установлена локально"
+            # installed ведёт на файл манифеста
+            if installed and os.path.isfile(installed):
+                size_gb = _ollama_size_from_manifest(installed)
         else:
-            meta["description"] = "Модель Diffusers, установлена локально"
+            if installed and os.path.isfile(installed):
+                # single-file модель
+                size_gb = round(os.path.getsize(installed) / (1024**3), 1)
+            elif installed and os.path.isdir(installed):
+                size_gb = _diffusers_size_from_blobs(installed)
+
+        if size_gb > 0:
+            meta["size_gb"] = size_gb
+            if not meta.get("min_ram_gb"):
+                meta["min_ram_gb"] = _estimate_min_ram_gb(size_gb, model_type)
+
+    # Приоритет описаний: каталог → справочник библиотеки → манифест → пусто
+    # Каталог уже заполнен при добавлении (AVAILABLE_MODELS_DEFAULTS / available_models.json)
+    # Проверяем только если описание пустое или заглушка
+    current_desc = meta.get("description", "") or ""
+    auto_stub = current_desc.startswith("Модель Ollama, установлена локально") or \
+                current_desc.startswith("Модель Diffusers, установлена локально")
+    
+    if not current_desc or auto_stub:
+        # 1. Справочник библиотеки Ollama (для Ollama-моделей)
+        if model_type == "ollama":
+            ref = model_info.get("source", {}).get("ref", "")
+            if ref:
+                lib_desc = _get_library_description(config, ref)
+                if lib_desc:
+                    meta["description"] = lib_desc
+                    return
+        
+        # 2. Манифест (автогенерация из config-слоя)
+        if model_type == "ollama":
+            installed = model_info.get("paths", {}).get("installed", "")
+            if installed and os.path.isfile(installed):
+                from core.paths_manager import PathsManager
+                pm = PathsManager()
+                ollama_models_path = pm.get_path(config, "ollama_models") or ""
+                desc = _ollama_description_from_manifest(installed, ollama_models_path)
+                if desc:
+                    meta["description"] = desc
+                    return
+        
+        # 3. Пусто (без заглушки "установлена локально")
+        #    Описание остаётся пустым, менеджер покажет "—"
 
 
 def reconcile_registry(config: Config) -> dict:
@@ -401,10 +484,14 @@ def reconcile_registry(config: Config) -> dict:
                     }
                     existing["updated_at"] = _now_iso()
 
-    # 2c. Заполняем метаданные (размер, ОЗУ) для моделей без них
+    # 2c. Заполняем метаданные (размер, ОЗУ, описание) для моделей без них
     for model_id, model_info in registry_data["models"].items():
-        if not model_info.get("meta", {}).get("size_gb"):
-            _fill_model_meta(model_info)
+        meta = model_info.get("meta", {})
+        desc = meta.get("description", "") or ""
+        needs_fill = (not meta.get("size_gb") or not desc
+                      or desc.startswith("Модель "))
+        if needs_fill:
+            _fill_model_meta(config, model_info)
 
     # 3. Сохраняем обновлённый реестр
     _save_registry_v3(config, registry_data)
@@ -698,11 +785,14 @@ def register_from_path(path: str, model_type: str, config: Config) -> str:
     result = validate_model_fast(path)
 
     registry_data = _load_registry_v3(config)
+    # Для hf_cache ref = имя репо (автор/модель) — едино с каталогом и сканом,
+    # иначе каталожная модель при добавлении с диска дублировалась бы строкой
+    source_ref = full_name if packaging == "hf_cache" else path
     registry_data["models"][model_id] = {
         "display_name": display_name,
         "type": model_type,
         "packaging": packaging,
-        "source": {"kind": "local_path", "ref": path},
+        "source": {"kind": "local_path", "ref": source_ref},
         "paths": {"installed": path},
         "meta": {},
         "validation": {
