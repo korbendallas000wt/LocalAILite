@@ -176,6 +176,126 @@ def _validate_unpacked_fast(model_path: str) -> ValidationResult:
     return ValidationResult(len(errors) == 0, errors=errors)
 
 
+@dataclass
+class CheckItem:
+    """Пункт проверки для чек-листа: имя, пройдено, детали."""
+    name: str
+    passed: bool
+    details: str = ""
+
+
+def validate_model_fast_detailed(model_path: str) -> tuple:
+    """Быстрая проверка Diffusers-модели с построчным результатом.
+
+    Возвращает (valid: bool, items: list[CheckItem]).
+    Используется менеджером для отрисовки чек-листа.
+    """
+    items = []
+
+    if not os.path.exists(model_path):
+        items.append(CheckItem("Путь существует", False))
+        return False, items
+
+    # Single-file модель
+    if os.path.isfile(model_path):
+        size = os.path.getsize(model_path)
+        items.append(CheckItem("Файл существует", True))
+        items.append(CheckItem("Размер > 0", size > 0, _fmt_size(size)))
+        return all(i.passed for i in items), items
+
+    blobs_dir = os.path.join(model_path, "blobs")
+
+    # Распакованная модель без blobs/
+    if not os.path.isdir(blobs_dir):
+        if os.path.exists(os.path.join(model_path, "model_index.json")):
+            items.append(CheckItem("model_index.json", True))
+            for req in ("unet", "vae", "text_encoder", "text_encoder_2"):
+                ok = os.path.isdir(os.path.join(model_path, req))
+                items.append(CheckItem(f"Папка {req}/", ok))
+            return all(i.passed for i in items), items
+        items.append(CheckItem("Структура", False,
+                               "не HF cache и нет model_index.json"))
+        return False, items
+
+    # HF cache: структура + .incomplete + пустые файлы
+    structure = validate_hf_cache_structure(model_path)
+    items.append(CheckItem(
+        "Структура", structure.valid,
+        "; ".join(structure.errors[:2]) if structure.errors else ""))
+
+    incomplete = _find_incomplete(model_path)
+    items.append(CheckItem(
+        "Нет .incomplete", len(incomplete) == 0,
+        f"{len(incomplete)} файл(ов)" if incomplete else ""))
+
+    zero = _find_zero_size(model_path)
+    items.append(CheckItem(
+        "Размеры > 0", len(zero) == 0,
+        f"{len(zero)} пустых" if zero else ""))
+
+    return all(i.passed for i in items), items
+
+
+def validate_ollama_model_detailed(model_name: str,
+                                   ollama_models_path: str = None) -> tuple:
+    """Быстрая проверка Ollama-модели с построчным результатом.
+
+    Возвращает (valid: bool, items: list[CheckItem]).
+    """
+    if ollama_models_path is None:
+        ollama_models_path = os.path.expanduser("~/.ollama/models")
+
+    items = []
+
+    if not os.path.isdir(ollama_models_path):
+        items.append(CheckItem("Папка моделей", False, "не найдена"))
+        return False, items
+
+    if ":" in model_name:
+        name, tag = model_name.split(":", 1)
+    else:
+        name, tag = model_name, "latest"
+
+    manifest_path = os.path.join(
+        ollama_models_path, "manifests", "registry.ollama.ai", "library", name, tag)
+
+    if not os.path.isfile(manifest_path):
+        items.append(CheckItem("Манифест", False, f"{name}:{tag} не найден"))
+        return False, items
+
+    try:
+        with open(manifest_path, "r") as f:
+            manifest = json.load(f)
+        items.append(CheckItem("Манифест", True))
+    except Exception as e:
+        items.append(CheckItem("Манифест", False, f"ошибка чтения: {e}"))
+        return False, items
+
+    blobs_dir = os.path.join(ollama_models_path, "blobs")
+    layers = manifest.get("layers", [])
+
+    missing = 0
+    size_mismatch = 0
+    for layer in layers:
+        digest = layer.get("digest", "")
+        expected_size = layer.get("size", 0)
+        blob_path = os.path.join(blobs_dir, digest.replace(":", "-"))
+        if not os.path.isfile(blob_path):
+            missing += 1
+            continue
+        if os.path.getsize(blob_path) != expected_size:
+            size_mismatch += 1
+
+    items.append(CheckItem(
+        "Блобы на месте", missing == 0,
+        f"отсутствует: {missing}" if missing else f"{len(layers)} слоёв"))
+    items.append(CheckItem(
+        "Точные размеры", size_mismatch == 0,
+        f"расхождений: {size_mismatch}" if size_mismatch else ""))
+
+    return all(i.passed for i in items), items
+
+
 def validate_model(model_path: str, expected_metadata: dict = None) -> ValidationResult:
     """Основная функция проверки. КОНТРАКТ СОХРАНЁН.
 
