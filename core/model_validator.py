@@ -55,11 +55,21 @@ def _is_hex(name: str, length: int) -> bool:
     return len(name) == length and all(c in _HASH_HEX for c in name.lower())
 
 
-def _sha256_file(path: str) -> str:
-    """SHA256 файла (чанками, без загрузки в память целиком)."""
+class ValidationCancelled(Exception):
+    """Поднимается при отмене проверки во время хэширования."""
+
+
+def _sha256_file(path: str, cancel_check=None) -> str:
+    """SHA256 файла (чанками, без загрузки в память целиком).
+
+    cancel_check() -> bool: если вернул True, хэширование
+    прерывается исключением ValidationCancelled.
+    """
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(_CHUNK), b""):
+            if cancel_check is not None and cancel_check():
+                raise ValidationCancelled()
             h.update(chunk)
     return h.hexdigest()
 
@@ -275,7 +285,8 @@ def _validate_file_sizes(model_path: str, expected_metadata: dict) -> Validation
 # ГЛУБОКАЯ проверка (хэши, с прогрессом)
 # ---------------------------------------------------------------------------
 
-def validate_model_deep(model_path: str, progress=None) -> ValidationResult:
+def validate_model_deep(model_path: str, progress=None,
+                        cancel_check=None) -> ValidationResult:
     """Глубокая проверка Diffusers-модели: хэши файлов в blobs/.
 
     Сначала быстрая проверка (если структура битая — хэшировать нет смысла).
@@ -316,7 +327,7 @@ def validate_model_deep(model_path: str, progress=None) -> ValidationResult:
                  f"Хэш {i}/{total}: {blob_name[:12]}… ({_fmt_size(size)})")
 
         if _is_hex(blob_name, 64):
-            actual = _sha256_file(blob_path)
+            actual = _sha256_file(blob_path, cancel_check)
             checked += 1
             if actual.lower() != blob_name.lower():
                 errors.append(
@@ -395,7 +406,8 @@ def validate_ollama_model(model_name: str, ollama_models_path: str = None) -> Va
 
 
 def validate_ollama_model_deep(model_name: str, ollama_models_path: str = None,
-                               progress=None) -> ValidationResult:
+                               progress=None,
+                               cancel_check=None) -> ValidationResult:
     """Глубокая проверка Ollama: SHA256 каждого blob против digest манифеста.
 
     Сначала быстрая проверка (размеры). Затем хэши.
@@ -441,7 +453,7 @@ def validate_ollama_model_deep(model_name: str, ollama_models_path: str = None,
 
         if digest.startswith("sha256:"):
             expected_hash = digest.split(":", 1)[1].lower()
-            actual_hash = _sha256_file(blob_path)
+            actual_hash = _sha256_file(blob_path, cancel_check)
             if actual_hash.lower() != expected_hash:
                 errors.append(f"Хэш blob не совпал: {blob_name[:16]}…")
 

@@ -174,6 +174,109 @@ def _scan_models_folder_v3(models_path: str) -> dict:
     return models
 
 
+def _scan_ollama_models_v3(ollama_models_path: str) -> dict:
+    """Сканирует манифесты Ollama и возвращает dict для реестра v3.
+    Находит все установленные модели (имя:тег) без запущенного сервера.
+    """
+    models = {}
+    library_path = os.path.join(
+        ollama_models_path, "manifests", "registry.ollama.ai", "library")
+    if not os.path.isdir(library_path):
+        return models
+
+    for model_name in os.listdir(library_path):
+        model_dir = os.path.join(library_path, model_name)
+        if not os.path.isdir(model_dir):
+            continue
+        for tag in os.listdir(model_dir):
+            tag_path = os.path.join(model_dir, tag)
+            if not os.path.isfile(tag_path):
+                continue
+            full_ref = f"{model_name}:{tag}"
+            model_id = f"ollama_{model_name}_{tag}".lower()
+            models[model_id] = {
+                "display_name": full_ref,
+                "type": "ollama",
+                "packaging": "ollama_pull",
+                "source": {"kind": "discovered", "ref": full_ref},
+                "paths": {"installed": tag_path},
+                "meta": {},
+                "validation": {},
+                "added_at": _now_iso(),
+                "updated_at": _now_iso()
+            }
+
+    return models
+
+
+def _ollama_size_from_manifest(manifest_path: str) -> float:
+    """Размер Ollama-модели (GB) по манифесту — сумма размеров слоёв."""
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        total = sum(layer.get("size", 0) for layer in manifest.get("layers", []))
+        return round(total / (1024**3), 1)
+    except Exception:
+        return 0.0
+
+
+def _diffusers_size_from_blobs(model_root: str) -> float:
+    """Размер Diffusers-модели (GB) — сумма файлов в blobs/."""
+    blobs_dir = os.path.join(model_root, "blobs")
+    if not os.path.isdir(blobs_dir):
+        return 0.0
+    total = 0
+    for name in os.listdir(blobs_dir):
+        p = os.path.join(blobs_dir, name)
+        if os.path.isfile(p):
+            total += os.path.getsize(p)
+    return round(total / (1024**3), 1)
+
+
+def _estimate_min_ram_gb(size_gb: float, model_type: str) -> int:
+    """Грубая оценка минимального ОЗУ по размеру модели."""
+    if size_gb <= 0:
+        return 0
+    if model_type == "ollama":
+        # Квантованные веса + контекст + накладные расходы (~3.5x)
+        return max(2, round(size_gb * 3.5))
+    # Diffusers SDXL: независимо от точного размера — ~16 GB
+    return 16
+
+
+def _fill_model_meta(model_info: dict):
+    """Дописывает в meta размер, оценку ОЗУ и описание, если их нет."""
+    meta = model_info.setdefault("meta", {})
+    if meta.get("size_gb"):
+        return
+
+    model_type = model_info.get("type")
+    installed = model_info.get("paths", {}).get("installed", "")
+
+    size_gb = 0.0
+    if model_type == "ollama":
+        # installed ведёт на файл манифеста
+        if installed and os.path.isfile(installed):
+            size_gb = _ollama_size_from_manifest(installed)
+    else:
+        if installed and os.path.isfile(installed):
+            # single-file модель
+            size_gb = round(os.path.getsize(installed) / (1024**3), 1)
+        elif installed and os.path.isdir(installed):
+            size_gb = _diffusers_size_from_blobs(installed)
+
+    if size_gb > 0:
+        meta["size_gb"] = size_gb
+        if not meta.get("min_ram_gb"):
+            meta["min_ram_gb"] = _estimate_min_ram_gb(size_gb, model_type)
+
+    if not meta.get("description"):
+        if model_type == "ollama":
+            meta["description"] = "Модель Ollama, установлена локально"
+        else:
+            meta["description"] = "Модель Diffusers, установлена локально"
+
+
 def reconcile_registry(config: Config) -> dict:
     """Сверка реестра с диском. Вызывается при открытии менеджера.
 
@@ -211,20 +314,32 @@ def reconcile_registry(config: Config) -> dict:
 
         # Путь есть — быстрая валидация
         model_type = model_info.get("type")
-        if model_type == "diffusers":
-            result = validate_model_fast(installed_path)
-        elif model_type == "ollama":
-            # Для Ollama installed_path — это имя модели (например, "qwen2.5:3b")
-            result = validate_ollama_model(installed_path, ollama_models_path)
+        if model_type == "ollama":
+            # Для Ollama имя берём из source.ref (installed_path — манифест)
+            ref = model_info.get("source", {}).get("ref", "")
+            result = validate_ollama_model(ref, ollama_models_path)
         else:
             result = validate_model_fast(installed_path)
 
-        model_info["validation"] = {
-            "last_method": "fast",
-            "last_result": "valid" if result.valid else "invalid",
-            "last_at": _now_iso(),
-            "errors": result.errors if not result.valid else []
-        }
+        old_validation = model_info.get("validation", {})
+        if not result.valid:
+            # Быстрая провалена — модель битая независимо от прошлой глубокой
+            model_info["validation"] = {
+                "last_method": "fast",
+                "last_result": "invalid",
+                "last_at": _now_iso(),
+                "errors": result.errors
+            }
+        elif old_validation.get("last_method") == "deep":
+            # Глубокая проверка авторитетнее — быстрой не затираем
+            pass
+        else:
+            model_info["validation"] = {
+                "last_method": "fast",
+                "last_result": "valid",
+                "last_at": _now_iso(),
+                "errors": []
+            }
         model_info["updated_at"] = _now_iso()
 
     # 2. Сканируем папку моделей и добавляем найденные
@@ -241,6 +356,55 @@ def reconcile_registry(config: Config) -> dict:
                     "last_at": _now_iso()
                 }
                 registry_data["models"][model_id] = model_info
+            else:
+                # Уже в реестре (например, добавлена по ссылке) — сверяем путь
+                existing = registry_data["models"][model_id]
+                existing_path = existing.get("paths", {}).get("installed", "")
+                new_path = model_info["paths"]["installed"]
+                if not existing_path or not os.path.exists(existing_path):
+                    existing["paths"]["installed"] = new_path
+                    result = validate_model_fast(new_path)
+                    existing["validation"] = {
+                        "last_method": "fast",
+                        "last_result": "valid" if result.valid else "invalid",
+                        "last_at": _now_iso()
+                    }
+                    existing["updated_at"] = _now_iso()
+
+    # 2b. Сканируем манифесты Ollama и добавляем найденные модели
+    if ollama_models_path and os.path.exists(ollama_models_path):
+        discovered_ollama = _scan_ollama_models_v3(ollama_models_path)
+        for model_id, model_info in discovered_ollama.items():
+            if model_id not in registry_data["models"]:
+                # Новая модель — добавляем и сразу валидируем
+                ref = model_info["source"]["ref"]
+                result = validate_ollama_model(ref, ollama_models_path)
+                model_info["validation"] = {
+                    "last_method": "fast",
+                    "last_result": "valid" if result.valid else "invalid",
+                    "last_at": _now_iso()
+                }
+                registry_data["models"][model_id] = model_info
+            else:
+                # Уже в реестре (например, добавлена по ссылке) — сверяем путь
+                existing = registry_data["models"][model_id]
+                existing_path = existing.get("paths", {}).get("installed", "")
+                new_path = model_info["paths"]["installed"]
+                if not existing_path or not os.path.exists(existing_path):
+                    existing["paths"]["installed"] = new_path
+                    ref = model_info["source"]["ref"]
+                    result = validate_ollama_model(ref, ollama_models_path)
+                    existing["validation"] = {
+                        "last_method": "fast",
+                        "last_result": "valid" if result.valid else "invalid",
+                        "last_at": _now_iso()
+                    }
+                    existing["updated_at"] = _now_iso()
+
+    # 2c. Заполняем метаданные (размер, ОЗУ) для моделей без них
+    for model_id, model_info in registry_data["models"].items():
+        if not model_info.get("meta", {}).get("size_gb"):
+            _fill_model_meta(model_info)
 
     # 3. Сохраняем обновлённый реестр
     _save_registry_v3(config, registry_data)
@@ -426,14 +590,18 @@ def list_all_models(config: Config) -> list:
         elif last_result == "invalid":
             status = "invalid"
         elif last_result == "valid":
-            # Проверяем, в рабочей ли папке
-            from core.paths_manager import PathsManager
-            pm = PathsManager()
-            models_path = pm.get_path(config, "sdxl_models")
-            if models_path and installed_path.startswith(models_path):
+            if model_info.get("type") == "ollama":
+                # Ollama в своей папке моделей — всегда «установлена»
                 status = "installed"
             else:
-                status = "valid"  # Валидна, но не в рабочей папке
+                # Проверяем, в рабочей ли папке
+                from core.paths_manager import PathsManager
+                pm = PathsManager()
+                models_path = pm.get_path(config, "sdxl_models")
+                if models_path and installed_path.startswith(models_path):
+                    status = "installed"
+                else:
+                    status = "valid"  # Валидна, но не в рабочей папке
         else:
             status = "downloaded"  # Есть на диске, но не проверена
 
@@ -476,6 +644,8 @@ def get_model_status(model_id: str, config: Config) -> str:
     if last_result == "invalid":
         return "invalid"
     if last_result == "valid":
+        if model_info.get("type") == "ollama":
+            return "installed"
         from core.paths_manager import PathsManager
         pm = PathsManager()
         models_path = pm.get_path(config, "sdxl_models")
@@ -544,5 +714,65 @@ def register_from_path(path: str, model_type: str, config: Config) -> str:
         "updated_at": _now_iso()
     }
 
+    _save_registry_v3(config, registry_data)
+    return model_id
+
+
+def update_model_validation(config: Config, model_id: str, method: str,
+                            valid: bool, errors: list = None) -> bool:
+    """Записывает результат проверки в реестр (после глубокой проверки).
+
+    Returns:
+        True если запись обновлена, False если модель не найдена.
+    """
+    registry_data = _load_registry_v3(config)
+    model_info = registry_data["models"].get(model_id)
+    if not model_info:
+        return False
+    model_info["validation"] = {
+        "last_method": method,
+        "last_result": "valid" if valid else "invalid",
+        "last_at": _now_iso(),
+        "errors": errors or []
+    }
+    model_info["updated_at"] = _now_iso()
+    _save_registry_v3(config, registry_data)
+    return True
+
+
+def add_model_by_ref(config: Config, ref: str, model_type: str) -> str:
+    """Добавляет модель в реестр по ссылке (репо для Diffusers, имя:тег для Ollama).
+
+    Модель получает статус «скачать» (файлов на диске нет).
+    Если модель уже есть в реестре — возвращает существующий model_id.
+    """
+    registry_data = _load_registry_v3(config)
+
+    # Проверка дубликатов
+    for model_id, info in registry_data["models"].items():
+        if info.get("type") == model_type and info.get("source", {}).get("ref") == ref:
+            return model_id
+
+    if model_type == "ollama":
+        display_name = ref
+        packaging = "ollama_pull"
+        model_id = f"ollama_{ref}".replace(":", "_").replace("/", "_").lower()
+    else:
+        raw_name = ref.split("/")[-1]
+        display_name = _beautify_name(raw_name)
+        packaging = "hf_cache"
+        model_id = ref.replace("/", "_").lower()
+
+    registry_data["models"][model_id] = {
+        "display_name": display_name,
+        "type": model_type,
+        "packaging": packaging,
+        "source": {"kind": "user_url", "ref": ref},
+        "paths": {"installed": ""},
+        "meta": {},
+        "validation": {},
+        "added_at": _now_iso(),
+        "updated_at": _now_iso()
+    }
     _save_registry_v3(config, registry_data)
     return model_id
