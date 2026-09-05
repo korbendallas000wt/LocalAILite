@@ -1,29 +1,36 @@
 #!/usr/bin/env python3
 """
-core/model_validator.py — проверка целостности моделей.
+core/model_validator.py — проверка целостности моделей (v3, двухуровневая).
 
-Используется инсталлером и (в будущем) менеджером моделей в приложении.
+Два уровня:
 
-Функции:
+  БЫСТРАЯ (структурная, мгновенная, БЕЗ чтения содержимого):
+    - Diffusers: структура HF cache + отсутствие .incomplete + размеры > 0
+    - Ollama:    манифест + наличие blobs + точные размеры
+
+  ГЛУБОКАЯ (хэш, читает файлы, с прогрессом):
+    - Diffusers: SHA256 файлов blobs/ (имя 64 hex = хэш содержимого)
+    - Ollama:    SHA256 blobs против digest из манифеста
+
+Публичный контракт (сохранён для инсталлера и генерации):
   validate_model(model_path, expected_metadata=None) -> ValidationResult
-      Основная функция проверки. Если expected_metadata есть (наши модели) —
-      проверяет размер + структуру. Если нет (незнакомые) — только структуру.
-
+  validate_ollama_model(model_name, ollama_models_path=None) -> ValidationResult
   validate_hf_cache_structure(model_path) -> ValidationResult
-      Проверка структуры HF cache: blobs/, snapshots/, симлинки, обязательные папки.
-
   validate_single_file(file_path, expected_size=None) -> ValidationResult
-      Проверка single-file модели (.safetensors, .ckpt).
 
-  get_model_metadata_from_hf(model_id) -> dict
-      Получение metadata из HF API (размеры файлов, список файлов).
-      Возвращает {file_path: size} или None при ошибке.
+Новое в v3:
+  validate_model_fast(model_path) -> ValidationResult
+  validate_model_deep(model_path, progress=None) -> ValidationResult
+  validate_ollama_model_deep(model_name, ollama_models_path=None, progress=None) -> ValidationResult
 """
 
 import os
 import json
-import requests
+import hashlib
 from dataclasses import dataclass, field
+
+_HASH_HEX = set("0123456789abcdef")
+_CHUNK = 8 * 1024 * 1024  # 8 MB
 
 
 @dataclass
@@ -39,172 +46,205 @@ class ValidationResult:
         return f"❌ Errors: {'; '.join(self.errors)}"
 
 
-def validate_model(model_path: str, expected_metadata: dict = None) -> ValidationResult:
-    """
-    Основная функция проверки целостности модели.
+# ---------------------------------------------------------------------------
+# Вспомогательные
+# ---------------------------------------------------------------------------
 
-    Args:
-        model_path: Путь к модели (папка HF cache или файл)
-        expected_metadata: Ожидаемое metadata {file_path: size} из HF API.
-                           Если None — проверяется только структура.
+def _is_hex(name: str, length: int) -> bool:
+    """True, если name — ровно length hex-символов."""
+    return len(name) == length and all(c in _HASH_HEX for c in name.lower())
 
-    Returns:
-        ValidationResult с valid, errors, warnings
+
+def _sha256_file(path: str) -> str:
+    """SHA256 файла (чанками, без загрузки в память целиком)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(_CHUNK), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _fmt_size(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024:
+            return f"{int(n)} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} PB"
+
+
+def _find_incomplete(model_path: str) -> list:
+    """Ищет .incomplete в blobs/ — след прерванной загрузки."""
+    out = []
+    blobs_dir = os.path.join(model_path, "blobs")
+    if os.path.isdir(blobs_dir):
+        for name in os.listdir(blobs_dir):
+            if name.endswith(".incomplete"):
+                out.append(name)
+    return out
+
+
+def _find_zero_size(model_path: str) -> list:
+    """Ищет пустые (0 байт) файлы в blobs/."""
+    out = []
+    blobs_dir = os.path.join(model_path, "blobs")
+    if os.path.isdir(blobs_dir):
+        for name in os.listdir(blobs_dir):
+            if name.endswith(".incomplete"):
+                continue
+            p = os.path.join(blobs_dir, name)
+            if os.path.isfile(p) and os.path.getsize(p) == 0:
+                out.append(name)
+    return out
+
+
+def _find_broken_symlinks(directory: str) -> list:
+    """Находит битые симлинки (рекурсивно)."""
+    broken = []
+    for root, dirs, files in os.walk(directory):
+        for name in files + dirs:
+            path = os.path.join(root, name)
+            if os.path.islink(path) and not os.path.exists(path):
+                broken.append(os.path.relpath(path, directory))
+    return broken
+
+
+# ---------------------------------------------------------------------------
+# БЫСТРАЯ проверка (структурная)
+# ---------------------------------------------------------------------------
+
+def validate_model_fast(model_path: str) -> ValidationResult:
+    """Быстрая строгая проверка БЕЗ чтения содержимого файлов.
+
+    Для HF cache: структура + нет .incomplete + нет нулевых файлов.
+    Для single-file / распакованной папки: базовая структура.
     """
     if not os.path.exists(model_path):
         return ValidationResult(False, errors=[f"Путь не существует: {model_path}"])
 
-    # Single-file модель
     if os.path.isfile(model_path):
-        return validate_single_file(model_path,
-                                     expected_size=expected_metadata.get("size") if expected_metadata else None)
+        return validate_single_file(model_path)
 
-    # HF cache папка
     if os.path.isdir(model_path):
+        blobs_dir = os.path.join(model_path, "blobs")
+
+        # Распакованная модель без blobs/ (папка с model_index.json)
+        if not os.path.isdir(blobs_dir):
+            if os.path.exists(os.path.join(model_path, "model_index.json")):
+                return _validate_unpacked_fast(model_path)
+            return ValidationResult(
+                False, errors=["Не HF cache и нет model_index.json"])
+
+        # HF cache
         result = validate_hf_cache_structure(model_path)
         if not result.valid:
             return result
 
-        # Если есть expected_metadata — проверяем размеры
-        if expected_metadata:
-            size_result = _validate_file_sizes(model_path, expected_metadata)
-            result.errors.extend(size_result.errors)
-            result.warnings.extend(size_result.warnings)
-            result.valid = len(result.errors) == 0
+        incomplete = _find_incomplete(model_path)
+        if incomplete:
+            result.errors.append(
+                f"Прерванная загрузка: {len(incomplete)} файл(ов) .incomplete")
 
+        zero = _find_zero_size(model_path)
+        if zero:
+            result.errors.append(
+                f"Пустые файлы (0 байт): {len(zero)} шт. в blobs/")
+
+        result.valid = len(result.errors) == 0
         return result
 
     return ValidationResult(False, errors=[f"Неизвестный тип: {model_path}"])
 
 
-def validate_hf_cache_structure(model_path: str) -> ValidationResult:
-    """
-    Проверка структуры HF cache папки.
+def _validate_unpacked_fast(model_path: str) -> ValidationResult:
+    """Быстрая проверка распакованной папки (без blobs/)."""
+    errors = []
+    if not os.path.exists(os.path.join(model_path, "model_index.json")):
+        errors.append("Нет model_index.json")
+    for req in ("unet", "vae", "text_encoder", "text_encoder_2"):
+        if not os.path.isdir(os.path.join(model_path, req)):
+            errors.append(f"Нет обязательной папки: {req}/")
+    return ValidationResult(len(errors) == 0, errors=errors)
 
-    Проверяет:
-    1. Наличие папок blobs/, snapshots/
-    2. Наличие хотя бы одного snapshot
-    3. Наличие model_index.json в snapshot
-    4. Живость симлинков (указывают на существующие файлы в blobs/)
-    5. Наличие обязательных папок: unet/, vae/, text_encoder/, text_encoder_2/
+
+def validate_model(model_path: str, expected_metadata: dict = None) -> ValidationResult:
+    """Основная функция проверки. КОНТРАКТ СОХРАНЁН.
+
+    Без expected_metadata — быстрая строгая проверка.
+    С expected_metadata — дополнительно сверка размеров с метаданными.
     """
+    result = validate_model_fast(model_path)
+    if not result.valid:
+        return result
+    if expected_metadata and os.path.isdir(model_path):
+        size_result = _validate_file_sizes(model_path, expected_metadata)
+        result.errors.extend(size_result.errors)
+        result.warnings.extend(size_result.warnings)
+        result.valid = len(result.errors) == 0
+    return result
+
+
+def validate_hf_cache_structure(model_path: str) -> ValidationResult:
+    """Проверка структуры HF cache (контракт сохранён)."""
     errors = []
     warnings = []
 
-    # Проверка blobs/
     blobs_dir = os.path.join(model_path, "blobs")
     if not os.path.isdir(blobs_dir):
-        errors.append(f"Отсутствует папка blobs/: {blobs_dir}")
-        return ValidationResult(False, errors=errors)
+        return ValidationResult(False, errors=[f"Отсутствует папка blobs/: {blobs_dir}"])
 
-    # Проверка snapshots/
     snapshots_dir = os.path.join(model_path, "snapshots")
     if not os.path.isdir(snapshots_dir):
-        errors.append(f"Отсутствует папка snapshots/: {snapshots_dir}")
-        return ValidationResult(False, errors=errors)
+        return ValidationResult(False, errors=[f"Отсутствует папка snapshots/: {snapshots_dir}"])
 
-    # Проверка наличия хотя бы одного snapshot
     snapshot_hashes = [d for d in os.listdir(snapshots_dir)
                        if os.path.isdir(os.path.join(snapshots_dir, d))]
     if not snapshot_hashes:
-        errors.append(f"Нет snapshot'ов в {snapshots_dir}")
-        return ValidationResult(False, errors=errors)
+        return ValidationResult(False, errors=[f"Нет snapshot'ов в {snapshots_dir}"])
 
-    # Берём первый snapshot
     snapshot_path = os.path.join(snapshots_dir, snapshot_hashes[0])
 
-    # Проверка model_index.json
-    model_index = os.path.join(snapshot_path, "model_index.json")
-    if not os.path.exists(model_index):
-        errors.append(f"Отсутствует model_index.json: {model_index}")
+    if not os.path.exists(os.path.join(snapshot_path, "model_index.json")):
+        errors.append(f"Отсутствует model_index.json в {snapshot_path}")
 
-    # Проверка обязательных папок
-    required_dirs = ["unet", "vae", "text_encoder", "text_encoder_2"]
-    for req_dir in required_dirs:
-        dir_path = os.path.join(snapshot_path, req_dir)
-        if not os.path.isdir(dir_path):
+    for req_dir in ("unet", "vae", "text_encoder", "text_encoder_2"):
+        if not os.path.isdir(os.path.join(snapshot_path, req_dir)):
             errors.append(f"Отсутствует обязательная папка: {req_dir}/")
 
-    # Проверка живости симлинков
-    broken_links = _find_broken_symlinks(snapshot_path)
-    if broken_links:
-        errors.append(f"Битые симлинки ({len(broken_links)}): {broken_links[:5]}...")
+    broken = _find_broken_symlinks(snapshot_path)
+    if broken:
+        errors.append(f"Битые симлинки ({len(broken)}): {broken[:5]}...")
 
-    valid = len(errors) == 0
-    return ValidationResult(valid, errors=errors, warnings=warnings)
+    return ValidationResult(len(errors) == 0, errors=errors, warnings=warnings)
 
 
 def validate_single_file(file_path: str, expected_size: int = None) -> ValidationResult:
-    """
-    Проверка single-file модели (.safetensors, .ckpt).
-
-    Args:
-        file_path: Путь к файлу
-        expected_size: Ожидаемый размер в байтах (опционально)
-    """
+    """Проверка single-file модели (контракт сохранён)."""
     errors = []
     warnings = []
 
     if not os.path.isfile(file_path):
         return ValidationResult(False, errors=[f"Файл не существует: {file_path}"])
 
-    # Проверка размера
     actual_size = os.path.getsize(file_path)
     if actual_size == 0:
         errors.append(f"Файл пустой: {file_path}")
 
     if expected_size is not None:
-        # Допускаем отклонение 1% (на случай разных версий)
         tolerance = expected_size * 0.01
         if abs(actual_size - expected_size) > tolerance:
             errors.append(
-                f"Размер файла не совпадает: ожидалось {expected_size} байт, "
-                f"фактически {actual_size} байт"
-            )
+                f"Размер файла не совпадает: ожидалось {expected_size}, "
+                f"фактически {actual_size}")
 
-    # Проверка расширения
-    valid_extensions = ['.safetensors', '.ckpt', '.bin', '.pt']
     ext = os.path.splitext(file_path)[1].lower()
-    if ext not in valid_extensions:
+    if ext not in ('.safetensors', '.ckpt', '.bin', '.pt'):
         warnings.append(f"Необычное расширение: {ext}")
 
-    valid = len(errors) == 0
-    return ValidationResult(valid, errors=errors, warnings=warnings)
-
-
-def get_model_metadata_from_hf(model_id: str, revision: str = "main") -> dict:
-    """
-    Получение metadata из HF API.
-
-    Args:
-        model_id: ID модели (например, "stabilityai/stable-diffusion-xl-base-1.0")
-        revision: Ветка/коммит (по умолчанию "main")
-
-    Returns:
-        {file_path: size} или None при ошибке
-    """
-    url = f"https://huggingface.co/api/models/{model_id}/tree/{revision}"
-    try:
-        resp = requests.get(url, timeout=30)
-        if resp.status_code != 200:
-            return None
-
-        files = resp.json()
-        metadata = {}
-        for file_info in files:
-            if file_info.get("type") == "file":
-                path = file_info.get("path", "")
-                size = file_info.get("size", 0)
-                metadata[path] = size
-
-        return metadata if metadata else None
-
-    except Exception:
-        return None
+    return ValidationResult(len(errors) == 0, errors=errors, warnings=warnings)
 
 
 def _validate_file_sizes(model_path: str, expected_metadata: dict) -> ValidationResult:
-    """Проверка размеров файлов в HF cache."""
+    """Сверка размеров файлов с expected_metadata (контракт сохранён)."""
     errors = []
     warnings = []
 
@@ -221,58 +261,81 @@ def _validate_file_sizes(model_path: str, expected_metadata: dict) -> Validation
         if not os.path.exists(file_path):
             warnings.append(f"Файл отсутствует (возможно, не обязателен): {expected_file}")
             continue
-
         actual_size = os.path.getsize(file_path)
-        # Допускаем отклонение 1%
         tolerance = expected_size * 0.01
         if abs(actual_size - expected_size) > tolerance:
             errors.append(
                 f"Размер {expected_file}: ожидалось {expected_size}, "
-                f"фактически {actual_size}"
-            )
+                f"фактически {actual_size}")
 
-    valid = len(errors) == 0
-    return ValidationResult(valid, errors=errors, warnings=warnings)
+    return ValidationResult(len(errors) == 0, errors=errors, warnings=warnings)
 
 
-def _find_broken_symlinks(directory: str) -> list:
-    """Находит битые симлинки в директории (рекурсивно)."""
-    broken = []
-    for root, dirs, files in os.walk(directory):
-        for name in files + dirs:
-            path = os.path.join(root, name)
-            if os.path.islink(path) and not os.path.exists(path):
-                broken.append(os.path.relpath(path, directory))
-    return broken
+# ---------------------------------------------------------------------------
+# ГЛУБОКАЯ проверка (хэши, с прогрессом)
+# ---------------------------------------------------------------------------
 
+def validate_model_deep(model_path: str, progress=None) -> ValidationResult:
+    """Глубокая проверка Diffusers-модели: хэши файлов в blobs/.
+
+    Сначала быстрая проверка (если структура битая — хэшировать нет смысла).
+    Затем для каждого файла с именем 64 hex (SHA256, Git LFS) считает SHA256
+    и сравнивает с именем. Файлы 40 hex (SHA1, Git-объекты) и прочие —
+    только размер (проверены в быстрой), чтобы не давать ложных срабатываний.
+
+    progress(current, total, message) — для прогрессбара.
+    """
+    progress = progress or (lambda c, t, m: None)
+
+    fast = validate_model_fast(model_path)
+    if not fast.valid:
+        return fast
+
+    # Single-file: локального хэша нет — быстрая проверка есть потолок
+    if os.path.isfile(model_path):
+        return fast
+
+    blobs_dir = os.path.join(model_path, "blobs")
+    if not os.path.isdir(blobs_dir):
+        # Распакованная папка: нет blobs для хэширования
+        return fast
+
+    blobs = sorted(
+        f for f in os.listdir(blobs_dir)
+        if os.path.isfile(os.path.join(blobs_dir, f)) and not f.endswith(".incomplete"))
+
+    errors = []
+    warnings = []
+    total = len(blobs)
+    checked = 0
+
+    for i, blob_name in enumerate(blobs, 1):
+        blob_path = os.path.join(blobs_dir, blob_name)
+        size = os.path.getsize(blob_path)
+        progress(i, total,
+                 f"Хэш {i}/{total}: {blob_name[:12]}… ({_fmt_size(size)})")
+
+        if _is_hex(blob_name, 64):
+            actual = _sha256_file(blob_path)
+            checked += 1
+            if actual.lower() != blob_name.lower():
+                errors.append(
+                    f"Хэш не совпал {blob_name[:12]}…: "
+                    f"ожидался {blob_name[:12]}…, получен {actual[:12]}…")
+
+    if total > 0 and checked == 0:
+        warnings.append("Не найдено SHA256-blob'ов для проверки хэшей")
+
+    return ValidationResult(len(errors) == 0, errors=errors, warnings=warnings)
+
+
+# ---------------------------------------------------------------------------
+# Ollama
+# ---------------------------------------------------------------------------
 
 def validate_ollama_model(model_name: str, ollama_models_path: str = None) -> ValidationResult:
-    """
-    Проверка целостности Ollama модели (LLM).
-
-    Ollama хранит модели в собственном формате:
-      ~/.ollama/models/
-      ├── blobs/                    # Бинарные данные (веса, конфиги)
-      │   └── sha256-{hash}
-      └── manifests/
-          └── registry.ollama.ai/library/{model}/
-              └── {tag}             # Манифест JSON
-
-    Манифест содержит список layers, каждый с digest (хэш) и size (размер).
-    Blobs хранятся отдельно, имя blob = digest с заменой ":" на "-".
-
-    Проверяет:
-    1. Наличие манифеста
-    2. Наличие всех blobs, на которые ссылается манифест
-    3. Размеры blobs (сравнение с манифестом)
-
-    Args:
-        model_name: Имя модели (например, "qwen2.5-coder:3b" или "llama3:latest")
-        ollama_models_path: Путь к папке моделей Ollama.
-                            По умолчанию ~/.ollama/models
-
-    Returns:
-        ValidationResult с valid, errors, warnings
+    """Быстрая проверка Ollama-модели: манифест + blobs + точные размеры.
+    КОНТРАКТ СОХРАНЁН.
     """
     if ollama_models_path is None:
         ollama_models_path = os.path.expanduser("~/.ollama/models")
@@ -280,16 +343,13 @@ def validate_ollama_model(model_name: str, ollama_models_path: str = None) -> Va
     errors = []
     warnings = []
 
-    # Проверка существования папки моделей
     if not os.path.isdir(ollama_models_path):
         return ValidationResult(False, errors=[f"Папка моделей Ollama не найдена: {ollama_models_path}"])
 
-    # Поиск манифеста
     manifests_dir = os.path.join(ollama_models_path, "manifests", "registry.ollama.ai", "library")
     if not os.path.isdir(manifests_dir):
         return ValidationResult(False, errors=[f"Нет папки манифестов: {manifests_dir}"])
 
-    # Разбираем model_name на имя и тег (например, "qwen2.5-coder:3b")
     if ":" in model_name:
         name, tag = model_name.split(":", 1)
     else:
@@ -299,14 +359,12 @@ def validate_ollama_model(model_name: str, ollama_models_path: str = None) -> Va
     if not os.path.isfile(manifest_path):
         return ValidationResult(False, errors=[f"Манифест не найден: {manifest_path}"])
 
-    # Читаем манифест
     try:
         with open(manifest_path, 'r') as f:
             manifest = json.load(f)
     except Exception as e:
         return ValidationResult(False, errors=[f"Ошибка чтения манифеста: {e}"])
 
-    # Проверяем каждый layer
     blobs_dir = os.path.join(ollama_models_path, "blobs")
     if not os.path.isdir(blobs_dir):
         return ValidationResult(False, errors=[f"Нет папки blobs: {blobs_dir}"])
@@ -320,7 +378,6 @@ def validate_ollama_model(model_name: str, ollama_models_path: str = None) -> Va
         expected_size = layer.get("size", 0)
         media_type = layer.get("mediaType", "")
 
-        # digest имеет формат "sha256:{hash}", blob хранится как "sha256-{hash}"
         blob_name = digest.replace(":", "-")
         blob_path = os.path.join(blobs_dir, blob_name)
 
@@ -332,8 +389,82 @@ def validate_ollama_model(model_name: str, ollama_models_path: str = None) -> Va
         if actual_size != expected_size:
             errors.append(
                 f"Размер blob {blob_name}: ожидалось {expected_size}, "
-                f"фактически {actual_size}"
-            )
+                f"фактически {actual_size}")
 
-    valid = len(errors) == 0
-    return ValidationResult(valid, errors=errors, warnings=warnings)
+    return ValidationResult(len(errors) == 0, errors=errors, warnings=warnings)
+
+
+def validate_ollama_model_deep(model_name: str, ollama_models_path: str = None,
+                               progress=None) -> ValidationResult:
+    """Глубокая проверка Ollama: SHA256 каждого blob против digest манифеста.
+
+    Сначала быстрая проверка (размеры). Затем хэши.
+    progress(current, total, message) — для прогрессбара.
+    """
+    progress = progress or (lambda c, t, m: None)
+
+    fast = validate_ollama_model(model_name, ollama_models_path)
+    if not fast.valid:
+        return fast
+
+    if ollama_models_path is None:
+        ollama_models_path = os.path.expanduser("~/.ollama/models")
+
+    if ":" in model_name:
+        name, tag = model_name.split(":", 1)
+    else:
+        name, tag = model_name, "latest"
+
+    manifest_path = os.path.join(
+        ollama_models_path, "manifests", "registry.ollama.ai", "library", name, tag)
+    try:
+        with open(manifest_path, 'r') as f:
+            manifest = json.load(f)
+    except Exception as e:
+        return ValidationResult(False, errors=[f"Ошибка чтения манифеста: {e}"])
+
+    layers = manifest.get("layers", [])
+    blobs_dir = os.path.join(ollama_models_path, "blobs")
+
+    errors = []
+    total = len(layers)
+    for i, layer in enumerate(layers, 1):
+        digest = layer.get("digest", "")
+        media_type = layer.get("mediaType", "")
+        blob_name = digest.replace(":", "-")
+        blob_path = os.path.join(blobs_dir, blob_name)
+        progress(i, total, f"Хэш {i}/{total}: {media_type}")
+
+        if not os.path.isfile(blob_path):
+            errors.append(f"Blob отсутствует: {blob_name}")
+            continue
+
+        if digest.startswith("sha256:"):
+            expected_hash = digest.split(":", 1)[1].lower()
+            actual_hash = _sha256_file(blob_path)
+            if actual_hash.lower() != expected_hash:
+                errors.append(f"Хэш blob не совпал: {blob_name[:16]}…")
+
+    return ValidationResult(len(errors) == 0, errors=errors)
+
+
+# ---------------------------------------------------------------------------
+# Метаданные из HF API (опционально, сеть; в проверке не используется)
+# ---------------------------------------------------------------------------
+
+def get_model_metadata_from_hf(model_id: str, revision: str = "main") -> dict:
+    """{file_path: size} из HF API или None. Требует сеть."""
+    import requests
+    url = f"https://huggingface.co/api/models/{model_id}/tree/{revision}"
+    try:
+        resp = requests.get(url, timeout=30)
+        if resp.status_code != 200:
+            return None
+        files = resp.json()
+        metadata = {}
+        for file_info in files:
+            if file_info.get("type") == "file":
+                metadata[file_info.get("path", "")] = file_info.get("size", 0)
+        return metadata if metadata else None
+    except Exception:
+        return None
