@@ -283,7 +283,7 @@ class ModelManagerDialog(QDialog):
         check_layout.addWidget(self._hash_btn)
         self._remove_btn = QPushButton("Убрать из списка")
         self._remove_btn.setToolTip("Удалить запись из реестра (для недоскачанных моделей)")
-        self._remove_btn.setEnabled(False)
+        self._remove_btn.setVisible(False)
         self._remove_btn.clicked.connect(self._on_remove_btn_clicked)
         check_layout.addWidget(self._remove_btn)
         info_bar.addWidget(check_group)
@@ -756,7 +756,7 @@ class ModelManagerDialog(QDialog):
         self._desc_label.setText("")
         self._checklist_label.setText("")
         self._hash_btn.setEnabled(False)
-        self._remove_btn.setEnabled(False)
+        self._remove_btn.setVisible(False)
 
     def _update_details(self, model_row: dict):
         # Блок 1: Данные (без имени — оно в «Описании»; путь в одну строку)
@@ -863,12 +863,16 @@ class ModelManagerDialog(QDialog):
             self._deep_validate_model(row)
 
     def _update_remove_btn(self, model_row: dict):
-        """Кнопка «Убрать из списка» активна только для недоскачанных моделей."""
+        """Кнопка «Убрать из списка» показана только для недоскачанных моделей.
+
+        Для остальных моделей (скачанных/установленных) кнопка скрыта,
+        чтобы не занимать место в блоке «Проверка» рядом с чек-листом.
+        """
         if self._is_verifying or self._is_downloading:
-            self._remove_btn.setEnabled(False)
+            self._remove_btn.setVisible(False)
             return
         status = model_row.get("status", "")
-        self._remove_btn.setEnabled(status == "download")
+        self._remove_btn.setVisible(status == "download")
 
     def _on_remove_btn_clicked(self):
         row = self._get_selected_row()
