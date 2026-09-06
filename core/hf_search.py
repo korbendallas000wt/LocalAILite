@@ -105,11 +105,12 @@ class HFSearchWorker(QThread):
     error_occurred = pyqtSignal(str)   # сообщение об ошибке
 
     def __init__(self, query: str, base_filter: str = "Все",
-                 category_filter: str = "Все", parent=None):
+                 category_filter: str = "Все", show_nsfw: bool = False, parent=None):
         super().__init__(parent)
         self._query = query.strip()
         self._base_filter = base_filter
         self._category_filter = category_filter
+        self._show_nsfw = show_nsfw
 
     def run(self):
         try:
@@ -144,10 +145,19 @@ class HFSearchWorker(QThread):
             tags = m.get("tags", [])
             siblings = m.get("siblings", [])
 
+            # Локальная фильтрация NSFW: тег «nsfw» или вхождение в имени/пути репо
+            # (у части моделей тег отсутствует, но маркер есть в названии)
+            tags_lower = [t.lower() for t in tags]
+            is_nsfw = ("nsfw" in tags_lower) or ("nsfw" in model_id.lower())
+            if not self._show_nsfw and is_nsfw:
+                continue
+
             base = _detect_base(tags, model_id)
             category = _detect_category(tags, model_id)
             packaging = _detect_packaging(tags, siblings)
-            size_gb = _estimate_size_gb(siblings)
+            # Размер — поисковый API не возвращает размер файлов, пропускаем
+            # (доп. запрос к /api/models/{id} замедлит поиск в 10 раз)
+            size_gb = 0.0
 
             # Фильтр по базовой модели
             if self._base_filter != "Все" and base != self._base_filter:
@@ -158,10 +168,9 @@ class HFSearchWorker(QThread):
                 if category != cat_map.get(self._category_filter, "checkpoint"):
                     continue
 
-            # Описание — первая строка карточки (если есть)
-            description = m.get("cardData", {}).get("description", "") if m.get("cardData") else ""
-            if description:
-                description = description.split("\n")[0].strip()[:200]
+            # Описание — поисковый API не возвращает cardData, пропускаем
+            # (доп. запрос к /api/models/{id} замедлит поиск в 10 раз)
+            description = ""
 
             # Красивое имя из model_id
             raw_name = model_id.split("/")[-1] if "/" in model_id else model_id
