@@ -2,7 +2,7 @@
 Менеджер моделей v4 (ui/dialogs/model_manager_dialog.py).
 
 Структура:
-- 3 вкладки: Реестр / Добавить / Найти
+- 4 вкладки: Реестр / Добавить / Поиск / Ссылки
 - Статус-полоса внизу (статусбар + прогрессбар) — видна с любой вкладки
 
 Вкладка «Реестр» (модель «выбрал модель → всё для неё в панели»):
@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
                               QTreeWidget, QTreeWidgetItem, QLabel, QPushButton,
                               QProgressBar, QCheckBox, QComboBox, QHeaderView,
                               QMessageBox, QWidget, QAbstractItemView, QGroupBox,
-                              QLineEdit, QFileDialog)
+                              QLineEdit, QFileDialog, QListWidget, QListWidgetItem)
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QColor, QBrush, QPalette, QFont, QDesktopServices
 from utils.config import Config
@@ -40,6 +40,7 @@ from core.model_downloader import OllamaDownloader, DiffusersDownloader
 from core.model_lifecycle import delete_ollama_model, delete_diffusers_model
 from core.model_validator import validate_model_fast_detailed, validate_ollama_model_detailed
 from core.paths_manager import PathsManager
+from core.hf_search import HFSearchWorker
 
 
 # Маппинг типов моделей → флаги features/*
@@ -299,8 +300,11 @@ class ModelManagerDialog(QDialog):
         # --- Вкладка 2: Добавить ---
         self._tabs.addTab(self._build_add_tab(), "Добавить")
 
-        # --- Вкладка 3: Найти ---
-        self._tabs.addTab(self._build_find_tab(), "Найти")
+        # --- Вкладка 3: Поиск (HuggingFace API) ---
+        self._tabs.addTab(self._build_search_tab(), "Поиск")
+
+        # --- Вкладка 4: Ссылки (внешние ресурсы) ---
+        self._tabs.addTab(self._build_links_tab(), "Ссылки")
 
         # === Статус-полоса внизу (вне вкладок) ===
         status_group = QGroupBox("Статус")
@@ -663,13 +667,148 @@ class ModelManagerDialog(QDialog):
 
     # === Вкладка «Найти» ===
 
-    def _build_find_tab(self) -> QWidget:
+    def _build_search_tab(self) -> QWidget:
+        """Вкладка «Поиск»: поиск моделей на HuggingFace через API."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        # Поисковая строка
+        search_bar = QHBoxLayout()
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("Введите запрос: realistic portrait, sdxl base...")
+        self._search_input.returnPressed.connect(self._on_search_clicked)
+        search_bar.addWidget(self._search_input, 1)
+
+        self._search_btn = QPushButton("Искать")
+        self._search_btn.clicked.connect(self._on_search_clicked)
+        search_bar.addWidget(self._search_btn)
+        layout.addLayout(search_bar)
+
+        # Фильтры
+        filters_bar = QHBoxLayout()
+        filters_bar.addWidget(QLabel("База:"))
+        self._base_filter = QComboBox()
+        self._base_filter.addItems(["Все", "SDXL", "Flux", "SD1.5", "SD3"])
+        self._base_filter.setCurrentIndex(1)  # По умолчанию SDXL
+        filters_bar.addWidget(self._base_filter)
+
+        filters_bar.addWidget(QLabel("Категория:"))
+        self._category_filter = QComboBox()
+        self._category_filter.addItems(["Все", "Чекпоинты", "LoRA", "VAE"])
+        self._category_filter.setCurrentIndex(1)  # По умолчанию Чекпоинты
+        filters_bar.addWidget(self._category_filter)
+
+        filters_bar.addStretch()
+        layout.addLayout(filters_bar)
+
+        # Список результатов
+        self._search_results = QListWidget()
+        self._search_results.setAlternatingRowColors(True)
+        self._search_results.itemDoubleClicked.connect(self._on_add_from_search_clicked)
+        layout.addWidget(self._search_results, 1)
+
+        # Кнопка «Добавить в реестр»
+        add_bar = QHBoxLayout()
+        add_bar.addStretch()
+        self._add_from_search_btn = QPushButton("Добавить выбранную в реестр")
+        self._add_from_search_btn.setEnabled(False)
+        self._add_from_search_btn.clicked.connect(self._on_add_from_search_clicked)
+        add_bar.addWidget(self._add_from_search_btn)
+        layout.addLayout(add_bar)
+
+        # Состояние поиска
+        self._search_worker = None
+        self._search_results_list = []
+
+        # Активация кнопки при выборе
+        self._search_results.currentItemChanged.connect(
+            lambda curr, prev: self._add_from_search_btn.setEnabled(curr is not None))
+
+        return tab
+
+    def _on_search_clicked(self):
+        """Запуск поиска на HuggingFace."""
+        query = self._search_input.text().strip()
+        if not query:
+            self._search_results.clear()
+            self._search_results_list = []
+            self._search_results.addItem("Введите запрос для поиска")
+            return
+
+        self._search_btn.setEnabled(False)
+        self._search_btn.setText("Поиск...")
+        self._search_results.clear()
+        self._search_results.addItem("Ищу модели...")
+
+        base = self._base_filter.currentText()
+        category = self._category_filter.currentText()
+        self._search_worker = HFSearchWorker(query, base, category)
+        self._search_worker.results_ready.connect(self._on_search_results_ready)
+        self._search_worker.error_occurred.connect(self._on_search_error)
+        self._search_worker.start()
+
+    def _on_search_results_ready(self, results: list):
+        """Обработка результатов поиска."""
+        self._search_btn.setEnabled(True)
+        self._search_btn.setText("Искать")
+        self._search_results.clear()
+        self._search_results_list = results
+
+        if not results:
+            self._search_results.addItem("Ничего не найдено")
+            return
+
+        for r in results:
+            size_str = f"{r['size_gb']:.1f} GB" if r['size_gb'] > 0 else "?"
+            tags_str = ", ".join(r['tags'][:3])
+            text = f"{r['name']}\n"
+            text += f"Загрузок: {r['downloads']:,}  Лайков: {r['likes']}  Размер: {size_str}  [{r['base']}]\n"
+            text += f"{tags_str}\n"
+            if r['description']:
+                text += f"{r['description'][:80]}..."
+            item = QListWidgetItem(text)
+            self._search_results.addItem(item)
+
+    def _on_search_error(self, msg: str):
+        """Обработка ошибки поиска."""
+        self._search_btn.setEnabled(True)
+        self._search_btn.setText("Искать")
+        self._search_results.clear()
+        self._search_results.addItem(f"Ошибка: {msg}")
+
+    def _on_add_from_search_clicked(self):
+        """Добавление выбранной модели в реестр."""
+        current = self._search_results.currentRow()
+        if current < 0 or current >= len(self._search_results_list):
+            return
+
+        model = self._search_results_list[current]
+        ref = model['ref']
+        try:
+            model_id = add_model_by_ref(self.config, ref, "diffusers")
+            self._status_label.setText(f"Добавлено: {model['name']}")
+            self._refresh_tabs()
+            self._tabs.setCurrentIndex(0)
+            for j in range(self._tree.topLevelItemCount()):
+                item = self._tree.topLevelItem(j)
+                row = item.data(0, Qt.ItemDataRole.UserRole)
+                if row and row.get('model_id') == model_id:
+                    self._tree.setCurrentItem(item)
+                    break
+        except Exception as e:
+            self._status_label.setText(f"Ошибка добавления: {e}")
+
+
+    def _build_links_tab(self) -> QWidget:
+        """Вкладка «Ссылки»: список внешних ресурсов."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
         layout.addWidget(QLabel(
-            "Где искать модели. Двойной клик по ресурсу — открыть в браузере."))
+            "Внешние ресурсы для поиска моделей. Двойной клик — открыть в браузере."))
 
         self._resources_tree = QTreeWidget()
         self._resources_tree.setColumnCount(2)
