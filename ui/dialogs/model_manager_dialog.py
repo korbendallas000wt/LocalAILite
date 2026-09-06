@@ -700,6 +700,10 @@ class ModelManagerDialog(QDialog):
         self._category_filter.setCurrentIndex(1)  # По умолчанию Чекпоинты
         filters_bar.addWidget(self._category_filter)
 
+        self._show_nsfw_cb = QCheckBox("Показывать NSFW")
+        self._show_nsfw_cb.setChecked(False)  # Дефолт: безопасно
+        filters_bar.addWidget(self._show_nsfw_cb)
+
         filters_bar.addStretch()
         layout.addLayout(filters_bar)
 
@@ -744,7 +748,8 @@ class ModelManagerDialog(QDialog):
 
         base = self._base_filter.currentText()
         category = self._category_filter.currentText()
-        self._search_worker = HFSearchWorker(query, base, category)
+        show_nsfw = self._show_nsfw_cb.isChecked()
+        self._search_worker = HFSearchWorker(query, base, category, show_nsfw)
         self._search_worker.results_ready.connect(self._on_search_results_ready)
         self._search_worker.error_occurred.connect(self._on_search_error)
         self._search_worker.start()
