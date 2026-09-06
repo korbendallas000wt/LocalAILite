@@ -710,13 +710,22 @@ class ModelManagerDialog(QDialog):
         # Список результатов
         self._search_results = QListWidget()
         self._search_results.setAlternatingRowColors(True)
-        self._search_results.itemDoubleClicked.connect(self._on_add_from_search_clicked)
+        self._search_results.itemDoubleClicked.connect(self._on_open_in_browser_clicked)
         layout.addWidget(self._search_results, 1)
 
-        # Кнопка «Добавить в реестр»
+        # Кнопки действий с выбранной моделью
         add_bar = QHBoxLayout()
         add_bar.addStretch()
-        self._add_from_search_btn = QPushButton("Добавить выбранную в реестр")
+        self._open_in_browser_btn = QPushButton("Открыть в браузере")
+        self._open_in_browser_btn.setToolTip(
+            "Открыть страницу модели на HuggingFace (примеры генераций, описание, теги)")
+        self._open_in_browser_btn.setEnabled(False)
+        self._open_in_browser_btn.clicked.connect(self._on_open_in_browser_clicked)
+        add_bar.addWidget(self._open_in_browser_btn)
+
+        self._add_from_search_btn = QPushButton("Добавить в реестр")
+        self._add_from_search_btn.setToolTip(
+            "Добавить выбранную модель в реестр для последующего скачивания")
         self._add_from_search_btn.setEnabled(False)
         self._add_from_search_btn.clicked.connect(self._on_add_from_search_clicked)
         add_bar.addWidget(self._add_from_search_btn)
@@ -726,11 +735,31 @@ class ModelManagerDialog(QDialog):
         self._search_worker = None
         self._search_results_list = []
 
-        # Активация кнопки при выборе
-        self._search_results.currentItemChanged.connect(
-            lambda curr, prev: self._add_from_search_btn.setEnabled(curr is not None))
+        # Активация обеих кнопок при выборе
+        self._search_results.currentItemChanged.connect(self._on_search_selection_changed)
 
         return tab
+
+    def _on_search_selection_changed(self, current, previous):
+        """Активация кнопок при выборе строки в списке результатов."""
+        has_selection = current is not None
+        self._add_from_search_btn.setEnabled(has_selection)
+        self._open_in_browser_btn.setEnabled(has_selection)
+
+    def _on_open_in_browser_clicked(self, item=None):
+        """Открывает страницу выбранной модели на HuggingFace в браузере.
+
+        Вызывается:
+        - по кнопке «Открыть в браузере»
+        - по двойному клику на элемент списка
+        """
+        current = self._search_results.currentRow()
+        if current < 0 or current >= len(self._search_results_list):
+            return
+        model = self._search_results_list[current]
+        url = model.get('url', '')
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
 
     def _on_search_clicked(self):
         """Запуск поиска на HuggingFace."""
