@@ -283,7 +283,7 @@ class ModelManagerDialog(QDialog):
         self._hash_btn.clicked.connect(self._on_hash_btn_clicked)
         check_layout.addWidget(self._hash_btn)
         self._remove_btn = QPushButton("Убрать из списка")
-        self._remove_btn.setToolTip("Удалить запись из реестра (для недоскачанных моделей)")
+        self._remove_btn.setToolTip("Удалить запись из реестра (для недоскачанных моделей, файлы не трогаются)")
         self._remove_btn.setVisible(False)
         self._remove_btn.clicked.connect(self._on_remove_btn_clicked)
         check_layout.addWidget(self._remove_btn)
@@ -499,9 +499,9 @@ class ModelManagerDialog(QDialog):
             state_btn.setToolTip("Переместить в папку моделей")
             state_btn.clicked.connect(lambda checked, m=m: self._install_model(m))
         elif status == "invalid":
-            state_btn.setText("Перекачать")
-            state_btn.setToolTip("Скачать заново")
-            state_btn.clicked.connect(lambda checked, m=m: self._download_model(m))
+            state_btn.setText("Удалить")
+            state_btn.setToolTip("Удалить битую модель (файлы + запись из реестра)")
+            state_btn.clicked.connect(lambda checked, m=m: self._delete_model(m))
         else:  # downloaded, installed
             state_btn.setText("Удалить")
             state_btn.setToolTip("Удалить модель")
@@ -1045,8 +1045,9 @@ class ModelManagerDialog(QDialog):
             self._remove_btn.setVisible(False)
             return
         status = model_row.get("status", "")
-        # Показываем для: "download" (недоскачана) и "invalid" (битая)
-        self._remove_btn.setVisible(status in ("download", "invalid"))
+        # Показываем только для: "download" (недоскачана, файлов нет)
+        # Для "invalid" (битая) есть кнопка "Удалить" в строке таблицы
+        self._remove_btn.setVisible(status == "download")
 
     def _on_remove_btn_clicked(self):
         row = self._get_selected_row()
