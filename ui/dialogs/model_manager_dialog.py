@@ -10,7 +10,7 @@
 - Фильтры: тип (комбобокс) + «Только совместимые» (чекбокс)
 - Одна кнопка действия в строке (Загрузить/Удалить/Установить/Перекачать)
 - Панель информации: 3 блока с рамками (Данные / Описание / Проверка)
-- Колонка «Железо» в таблице (цветной вердикт, сортируемая)
+- Колонка «Система» в таблице (цветной индикатор вердикта, сортируемая)
 - Блок «Проверка»: чек-лист быстрой проверки +
   кнопка «Хэш-проверка» (глубокая, на выбранной модели)
 - Имя модели — в блоке «Описание» (подкрашено), путь в одну строку
@@ -29,9 +29,10 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QColor, QBrush, QPalette, QFont, QDesktopServices
 from utils.config import Config
-from core.models_registry import (list_available_models, list_installed_ollama_models,
+from core.models_registry import (list_installed_ollama_models,
                                    list_all_models, update_model_validation,
-                                   add_model_by_ref, register_from_path)
+                                   add_model_by_ref, register_from_path,
+                                   remove_model_from_registry)
 from core.model_verifier import DeepValidationWorker
 from core.model_installer import (DiffusersInstallWorker, OllamaInstallWorker,
                                    derive_ollama_name_from_gguf)
@@ -65,21 +66,23 @@ STATUS_LABELS = {
 
 # Вердикт по железу: цвет и подпись
 VERDICT_COLORS = {
-    "ok":   "#3c9c3c",
-    "warn": "#e09020",
-    "no":   "#d9534f",
+    "ok":      "#3c9c3c",
+    "warn":    "#e09020",
+    "no":      "#d9534f",
+    "unknown": "#888888",
 }
 VERDICT_LABELS = {
-    "ok":   "Потянет",
-    "warn": "Впритык",
-    "no":   "Не потянет",
+    "ok":      "Потянет",
+    "warn":    "Впритык",
+    "no":      "Не потянет",
+    "unknown": "",
 }
 
 # Единый размер кнопок действий
 BTN_WIDTH = 92
 BTN_HEIGHT = 22
 
-# Пропорции колонок 0-5 (Имя, Тип, Размер, Мин.ОЗУ, Статус, Железо).
+# Пропорции колонок 0-5 (Имя, Тип, Размер, Мин.ОЗУ, Статус, Система).
 # Колонка 6 «Действие» — остаток.
 COLUMN_PERCENTS = [0.26, 0.09, 0.09, 0.10, 0.13, 0.12]
 
@@ -174,7 +177,6 @@ class ModelManagerDialog(QDialog):
     # === Загрузка данных ===
 
     def _load_data(self):
-        self._available = list_available_models(self.config)
         self._registry_models = list_all_models(self.config)  # вызывает reconcile
         self._installed_ollama = list_installed_ollama_models(self.config)
 
@@ -183,7 +185,7 @@ class ModelManagerDialog(QDialog):
     def _verdict_level(self, model_row: dict) -> str:
         min_ram = model_row.get("min_ram_gb", 0)
         if min_ram <= 0:
-            return "ok"
+            return "unknown"
         total = self._total_ram_gb
         if min_ram <= 0.90 * total:
             return "ok"
@@ -218,9 +220,14 @@ class ModelManagerDialog(QDialog):
         self._type_filter_combo.currentIndexChanged.connect(lambda *_: self._apply_filters())
         filter_bar.addWidget(self._type_filter_combo)
 
-        self._compat_checkbox = QCheckBox("Только совместимые")
-        self._compat_checkbox.stateChanged.connect(lambda *_: self._apply_filters())
-        filter_bar.addWidget(self._compat_checkbox)
+        self._compat_filter_combo = QComboBox()
+        self._compat_filter_combo.addItem("Все вердикты", None)
+        self._compat_filter_combo.addItem("Потянет", "ok")
+        self._compat_filter_combo.addItem("Впритык", "warn")
+        self._compat_filter_combo.addItem("Не потянет", "no")
+        self._compat_filter_combo.addItem("Неизвестно", "unknown")
+        self._compat_filter_combo.currentIndexChanged.connect(lambda *_: self._apply_filters())
+        filter_bar.addWidget(self._compat_filter_combo)
 
         filter_bar.addStretch()
 
@@ -274,6 +281,11 @@ class ModelManagerDialog(QDialog):
         self._hash_btn.setEnabled(False)
         self._hash_btn.clicked.connect(self._on_hash_btn_clicked)
         check_layout.addWidget(self._hash_btn)
+        self._remove_btn = QPushButton("Убрать из списка")
+        self._remove_btn.setToolTip("Удалить запись из реестра (для недоскачанных моделей)")
+        self._remove_btn.setEnabled(False)
+        self._remove_btn.clicked.connect(self._on_remove_btn_clicked)
+        check_layout.addWidget(self._remove_btn)
         info_bar.addWidget(check_group)
 
         # Обёртка панели с фиксированной высотой
@@ -308,7 +320,7 @@ class ModelManagerDialog(QDialog):
         tree = QTreeWidget()
         tree.setColumnCount(7)
         tree.setHeaderLabels(["Имя", "Тип", "Размер", "Мин. ОЗУ", "Статус",
-                              "Железо", "Действие"])
+                              "Система", "Действие"])
 
         header = tree.header()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -344,48 +356,11 @@ class ModelManagerDialog(QDialog):
     # === Построение единого списка моделей ===
 
     def _build_model_list(self) -> list:
-        """Объединяет каталог + реестр v3.0 + обнаруженные (оба типа)."""
+        """Объединяет реестр v3.0 + обнаруженные (оба типа)."""
         models = []
         seen = set()
 
-        # 1. Каталог (оба типа)
-        for section_name, cat_models in self._available.items():
-            feature = SECTION_TO_FEATURE.get(section_name, section_name)
-            if not self.config.get_feature(feature, True):
-                continue
-            for cat_model in cat_models:
-                if section_name == "diffusers" and cat_model.get("packaging") != "hf_cache":
-                    continue
-                source = cat_model["source"]
-                key = (section_name, source)
-                reg = self._find_in_registry(section_name, source)
-                if reg:
-                    status = reg["status"]
-                    model_id = reg["model_id"]
-                    path = reg["paths"].get("installed", "")
-                elif section_name == "ollama" and source in self._installed_ollama:
-                    status = "installed"
-                    model_id = None
-                    path = ""
-                else:
-                    status = "download"
-                    model_id = None
-                    path = ""
-                models.append({
-                    "name": cat_model["name"],
-                    "type": section_name,
-                    "size_gb": cat_model.get("size_gb", 0),
-                    "min_ram_gb": cat_model.get("min_ram_gb", 0),
-                    "description": cat_model.get("description", ""),
-                    "source": source,
-                    "status": status,
-                    "model_id": model_id,
-                    "path": path,
-                    "origin": "catalog",
-                })
-                seen.add(key)
-
-        # 2. Реестр: модели, которых нет в каталоге (оба типа)
+        # 1. Реестр (оба типа)
         for reg_model in self._registry_models:
             section_name = reg_model["type"]
             feature = SECTION_TO_FEATURE.get(section_name, section_name)
@@ -412,7 +387,7 @@ class ModelManagerDialog(QDialog):
                 "origin": "registry",
             })
 
-        # 3. Обнаруженные Ollama (fallback: в манифестах, но нет в реестре)
+        # 2. Обнаруженные Ollama (fallback: в манифестах, но нет в реестре)
         if self.config.get_feature("ollama", True):
             for ollama_name in self._installed_ollama:
                 key = ("ollama", ollama_name)
@@ -459,9 +434,9 @@ class ModelManagerDialog(QDialog):
             min_ram = model_row["min_ram_gb"]
             type_label = "Ollama" if model_row["type"] == "ollama" else "Diffusers"
             verdict = self._verdict_level(model_row)
-            verdict_text = VERDICT_LABELS[verdict]
+            verdict_text = "●"  # индикатор вместо текста
             verdict_color = QColor(VERDICT_COLORS[verdict])
-            verdict_rank = {"ok": 0, "warn": 1, "no": 2}[verdict]
+            verdict_rank = {"ok": 0, "warn": 1, "no": 2, "unknown": 3}[verdict]
 
             item = SortableItem([
                 model_row["name"],
@@ -473,7 +448,7 @@ class ModelManagerDialog(QDialog):
                 ""
             ])
             item.setData(0, Qt.ItemDataRole.UserRole, model_row)
-            # Числовые значения для сортировки (Размер, Мин. ОЗУ, Железо)
+            # Числовые значения для сортировки (Размер, Мин. ОЗУ, Система)
             item.setData(2, Qt.ItemDataRole.UserRole + 10, float(size_gb))
             item.setData(3, Qt.ItemDataRole.UserRole + 10, float(min_ram))
             item.setData(5, Qt.ItemDataRole.UserRole + 10, verdict_rank)
@@ -483,7 +458,7 @@ class ModelManagerDialog(QDialog):
             item.setForeground(4, QBrush(QColor(*status_color)))
             item.setForeground(5, QBrush(verdict_color))
 
-            # Приглушаем несовместимые (вердикт ❌), Статус и Железо не трогаем
+            # Приглушаем несовместимые (вердикт ❌), Статус и Система не трогаем
             if verdict == "no":
                 dim = QColor(150, 150, 150)
                 for col in range(7):
@@ -754,14 +729,14 @@ class ModelManagerDialog(QDialog):
 
     def _apply_filters(self):
         type_filter = self._type_filter_combo.currentData()
-        hide_incompatible = (self._compat_checkbox.checkState() == Qt.CheckState.Checked.value)
+        compat_filter = self._compat_filter_combo.currentData()
         for j in range(self._tree.topLevelItemCount()):
             item = self._tree.topLevelItem(j)
             model_row = item.data(0, Qt.ItemDataRole.UserRole)
             hidden = False
             if type_filter and model_row["type"] != type_filter:
                 hidden = True
-            if hide_incompatible and self._verdict_level(model_row) == "no":
+            if compat_filter and self._verdict_level(model_row) != compat_filter:
                 hidden = True
             item.setHidden(hidden)
 
@@ -781,6 +756,7 @@ class ModelManagerDialog(QDialog):
         self._desc_label.setText("")
         self._checklist_label.setText("")
         self._hash_btn.setEnabled(False)
+        self._remove_btn.setEnabled(False)
 
     def _update_details(self, model_row: dict):
         # Блок 1: Данные (без имени — оно в «Описании»; путь в одну строку)
@@ -807,6 +783,7 @@ class ModelManagerDialog(QDialog):
         # Блок 3: Проверка
         self._update_checklist(model_row)
         self._update_hash_btn(model_row)
+        self._update_remove_btn(model_row)
 
     def _short_path(self, path: str, max_len: int = 38) -> str:
         """Сокращает путь до одной строки: начало…хвост (хвост важнее)."""
@@ -884,6 +861,36 @@ class ModelManagerDialog(QDialog):
         row = self._get_selected_row()
         if row:
             self._deep_validate_model(row)
+
+    def _update_remove_btn(self, model_row: dict):
+        """Кнопка «Убрать из списка» активна только для недоскачанных моделей."""
+        if self._is_verifying or self._is_downloading:
+            self._remove_btn.setEnabled(False)
+            return
+        status = model_row.get("status", "")
+        self._remove_btn.setEnabled(status == "download")
+
+    def _on_remove_btn_clicked(self):
+        row = self._get_selected_row()
+        if not row:
+            return
+        source_ref = row.get("source", "")
+        model_id = row.get("model_id")
+        if not source_ref and not model_id:
+            return
+        box = self._make_msg_box(
+            QMessageBox.Icon.Question, "Удаление из реестра",
+            f"Удалить запись о модели:\n\n<b>{row['name']}</b>\n\n"
+            "Это удалит только запись из реестра, файлы не трогаются.\n"
+            "Модель можно будет добавить заново по ссылке.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if box.exec() != QMessageBox.StandardButton.Yes:
+            return
+        if source_ref:
+            remove_model_from_registry(self.config, source_ref)
+        self._selected_model_id = None
+        self._status_label.setText(f"Удалено из реестра: {row['name']}")
+        self._refresh_tabs()
 
     # === Проверка занятости ресурса ===
 
@@ -1047,7 +1054,7 @@ class ModelManagerDialog(QDialog):
         self._hash_btn.setEnabled(False)
         self._refresh_btn.setEnabled(False)
         self._type_filter_combo.setEnabled(False)
-        self._compat_checkbox.setEnabled(False)
+        self._compat_filter_combo.setEnabled(False)
         self._block_all_buttons()
 
         self._progress_bar.setVisible(True)
@@ -1077,7 +1084,7 @@ class ModelManagerDialog(QDialog):
         self._tree.setEnabled(True)
         self._refresh_btn.setEnabled(True)
         self._type_filter_combo.setEnabled(True)
-        self._compat_checkbox.setEnabled(True)
+        self._compat_filter_combo.setEnabled(True)
 
         if cancelled:
             self._status_label.setText("Проверка отменена")
