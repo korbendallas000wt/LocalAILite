@@ -1036,16 +1036,17 @@ class ModelManagerDialog(QDialog):
             self._deep_validate_model(row)
 
     def _update_remove_btn(self, model_row: dict):
-        """Кнопка «Убрать из списка» показана только для недоскачанных моделей.
+        """Кнопка «Убрать из списка» показана для недоскачанных и битых моделей.
 
-        Для остальных моделей (скачанных/установленных) кнопка скрыта,
+        Для скачанных/установленных моделей кнопка скрыта,
         чтобы не занимать место в блоке «Проверка» рядом с чек-листом.
         """
         if self._is_verifying or self._is_downloading:
             self._remove_btn.setVisible(False)
             return
         status = model_row.get("status", "")
-        self._remove_btn.setVisible(status == "download")
+        # Показываем для: "download" (недоскачана) и "invalid" (битая)
+        self._remove_btn.setVisible(status in ("download", "invalid"))
 
     def _on_remove_btn_clicked(self):
         row = self._get_selected_row()
