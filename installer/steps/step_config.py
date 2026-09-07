@@ -70,13 +70,21 @@ class StepConfig(InstallStep):
         return StepStatus.success(f"Структура data/ полная ({self.data_dir})")
 
     def install(self, progress=None) -> StepStatus:
-        """Создаём все подпапки."""
+        """Создаём все подпапки и копируем базовые файлы реестра."""
         try:
             for i, subdir in enumerate(self.SUBDIRS):
                 path = os.path.join(self.data_dir, subdir)
                 os.makedirs(path, exist_ok=True)
                 percent = int((i + 1) / len(self.SUBDIRS) * 100)
                 self._report(progress, percent, f"data/{subdir}")
+            
+            # Копируем базовый справочник описаний (идемпотентно: не перезаписываем существующий)
+            src_lib = os.path.join(self.base_dir, "scripts", "ollama_library.json")
+            dst_lib = os.path.join(self.data_dir, "shared", "registry", "ollama_library.json")
+            if os.path.exists(src_lib) and not os.path.exists(dst_lib):
+                import shutil
+                shutil.copy(src_lib, dst_lib)
+            
             return StepStatus.success(
                 f"Создана структура data/ ({len(self.SUBDIRS)} подпапок)",
                 details=f"data_dir={self.data_dir}",

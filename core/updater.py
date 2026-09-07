@@ -1,5 +1,5 @@
 """
-core/updater.py — модуль обновлений (v2.1, QNetworkAccessManager).
+core/updater.py — модуль обновлений (v2.2, QNetworkAccessManager).
 
 Проверка версий + скачивание + установка.
 Контракт:
@@ -181,7 +181,7 @@ class UpdateWorker(QThread):
 
 
 class Updater(QObject):
-    """Модуль обновлений (v2.1, асинхронный через QNetworkAccessManager)."""
+    """Модуль обновлений (v2.2, асинхронный через QNetworkAccessManager)."""
     update_available = pyqtSignal(str, str)
     update_not_found = pyqtSignal(str)
     check_failed = pyqtSignal(str)
@@ -195,7 +195,10 @@ class Updater(QObject):
         self._network_manager.finished.connect(self._on_network_reply)
         self._update_worker = None
         self._remote_version = None
-        self._pending_requests = {}  # request_id -> request_type
+        # v2.2: ключ — сам объект reply (сильная ссылка). Раньше был id(reply):
+        # GC мог собрать Python-обёртку до сигнала finished, ответ терялся
+        # (баг на PyQt 6.6 / Ubuntu — вкладка «Обновления» висела на «Проверка...»).
+        self._pending_requests = {}  # reply -> (request_type, local_version)
 
     def get_local_version(self):
         """Читает локальную версию из файла VERSION."""
@@ -218,14 +221,14 @@ class Updater(QObject):
         
         reply = self._network_manager.get(request)
         # Сохраняем тип запроса для обработки в _on_network_reply
-        self._pending_requests[id(reply)] = ("version_check", local_version)
+        self._pending_requests[reply] = ("version_check", local_version)
 
     def _on_network_reply(self, reply):
         """Обработка ответа от QNetworkAccessManager."""
-        reply_id = id(reply)
-        request_info = self._pending_requests.pop(reply_id, None)
-        
+        request_info = self._pending_requests.pop(reply, None)
+
         if not request_info:
+            print("[updater] Ответ сети без зарегистрированного запроса (проигнорирован)")
             reply.deleteLater()
             return
         
@@ -275,13 +278,14 @@ class Updater(QObject):
         request.setRawHeader(b"User-Agent", b"LocalAILite-Updater/2.1")
         
         reply = self._network_manager.get(request)
-        self._pending_requests[id(reply)] = ("changelog", None)
+        self._pending_requests[reply] = ("changelog", None)
 
     def _handle_changelog(self, changelog_text):
         """Обработка загруженного CHANGELOG."""
         try:
             # Парсим последний блок
             last_block = self._parse_changelog(changelog_text)
+            print("[updater] CHANGELOG загружен")
             self.changelog_loaded.emit(last_block)
         except Exception as e:
             logger.warning(f"Не удалось обработать CHANGELOG: {e}")

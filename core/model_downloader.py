@@ -76,7 +76,7 @@ class ModelDownloader(QObject):
         # Вычисляем процент от ожидаемого размера
         expected_bytes = self._model_size_gb * (1024 ** 3)
         if expected_bytes > 0:
-            pct = min(90, int((current_size / expected_bytes) * 85))  # Максимум 90% (остальное — верификация)
+            pct = min(85, int((current_size / expected_bytes) * 85))  # Максимум 85% (100% только после SUCCESS)
             current_gb = current_size / (1024 ** 3)
             self._report_progress(10 + pct, f"SDXL: {current_gb:.1f} / {self._model_size_gb:.1f} GB")
     
@@ -485,7 +485,8 @@ except Exception as e:
                     pct = int(match.group(1))
                     self._report_progress(10 + int(pct * 0.85), f"SDXL: {pct}%")
             elif "SUCCESS" in line:
-                self._report_progress(100, f"Модель {self._repo_id} скачана")
+                # Не показываем 100% здесь — модель ещё не прошла валидацию
+                self._report_progress(96, "Файлы скачаны, проверка целостности...")
     
     def _on_process_finished(self, exit_code, exit_status):
         """Обрабатывает завершение процесса скачивания."""

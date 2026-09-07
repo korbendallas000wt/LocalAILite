@@ -1,63 +1,136 @@
 """
-Менеджер моделей (ui/dialogs/model_manager_dialog.py).
+Менеджер моделей v4 (ui/dialogs/model_manager_dialog.py).
 
-Единая точка входа для управления моделями:
-- Просмотр доступных (список с вердиктами по железу)
-- Скачивание с прогрессом и отменой (одна загрузка за раз)
-- Удаление установленных (Ollama через 'ollama rm', Diffusers — папка + реестр)
-- Проверка целостности установленных моделей
+Структура:
+- 4 вкладки: Реестр / Добавить / Поиск / Ссылки
+- Статус-полоса внизу (статусбар + прогрессбар) — видна с любой вкладки
 
-Трёхуровневые вердикты по УСТАНОВЛЕННОЙ RAM (стабильно, не зависит от кэша):
-- ✅ Потянет  (min_ram <= 0.90 * total)
-- ⚠ Впритык   (0.90 * total < min_ram <= 1.05 * total) — приглушён + совет
-- ❌ Не потянет (min_ram > 1.05 * total) — скрывается галочкой «Только совместимые»
+Вкладка «Реестр» (модель «выбрал модель → всё для неё в панели»):
+- Единая таблица (без под-вкладок), колонка «Тип», сортировка кликом
+- Фильтры: тип (комбобокс) + «Только совместимые» (чекбокс)
+- Одна кнопка действия в строке (Загрузить/Удалить/Установить/Перекачать)
+- Панель информации: 3 блока с рамками (Данные / Описание / Проверка)
+- Колонка «Система» в таблице (цветной индикатор вердикта, сортируемая)
+- Блок «Проверка»: чек-лист быстрой проверки +
+  кнопка «Хэш-проверка» (глубокая, на выбранной модели)
+- Имя модели — в блоке «Описание» (подкрашено), путь в одну строку
+- На время хэширования таблица гаснет, в статусбаре имя модели
 
-Структура диалога (3 блока в QGroupBox, ничего не прыгает):
-1. Список моделей — вкладки с QTreeWidget (колонки пропорциональны ширине окна)
-2. Статус загрузки — две строки: [статусбар + чекбокс] / [прогрессбар во всю ширину]
-3. Информация о модели — метаданные + описание (две колонки, без прокрутки)
-
-Кнопки в колонке «Действие» (одинаковый размер):
-- Левая: 🔍 Проверить (установлена) / ❔ Вердикт (не установлена)
-- Правая (3 состояния): ⬇ Загрузить → ✕ Отменить (во время загрузки) → 🗑 Удалить
+Контракт сохранён: __init__(config, resource_manager, parent)
 """
 
 import psutil
+import os
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
                               QTreeWidget, QTreeWidgetItem, QLabel, QPushButton,
-                              QProgressBar, QCheckBox, QGroupBox, QHeaderView,
-                              QMessageBox, QWidget, QAbstractItemView)
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QPalette, QColor, QBrush
+                              QProgressBar, QCheckBox, QComboBox, QHeaderView,
+                              QMessageBox, QWidget, QAbstractItemView, QGroupBox,
+                              QLineEdit, QFileDialog, QListWidget, QListWidgetItem)
+from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtGui import QColor, QBrush, QPalette, QFont, QDesktopServices
 from utils.config import Config
-from core.models_registry import (list_available_models, list_installed_ollama_models,
-                                   load_registry)
+from core.models_registry import (list_installed_ollama_models,
+                                   list_all_models, update_model_validation,
+                                   add_model_by_ref, register_from_path,
+                                   remove_model_from_registry)
+from core.model_verifier import DeepValidationWorker
+from core.model_installer import (DiffusersInstallWorker, OllamaInstallWorker,
+                                   derive_ollama_name_from_gguf)
 from core.model_downloader import OllamaDownloader, DiffusersDownloader
-from core.model_lifecycle import (delete_ollama_model, delete_diffusers_model,
-                                   validate_installed_model)
+from core.model_lifecycle import delete_ollama_model, delete_diffusers_model
+from core.model_validator import validate_model_fast_detailed, validate_ollama_model_detailed
+from core.paths_manager import PathsManager
+from core.hf_search import HFSearchWorker
 
 
-# Маппинг секций реестра → флаги features/* (секция diffusers живёт под флагом sdxl)
+# Маппинг типов моделей → флаги features/*
 SECTION_TO_FEATURE = {
     "ollama": "ollama",
     "diffusers": "sdxl",
 }
 
-# Единый размер кнопок действий (не прыгают при смене состояния)
-BTN_WIDTH = 90
+# Статусы: цвет (RGB) и подпись
+STATUS_COLORS = {
+    "download":   (150, 150, 150),
+    "downloaded": (70, 130, 220),
+    "valid":      (60, 170, 80),
+    "installed":  (30, 130, 60),
+    "invalid":    (220, 70, 70),
+}
+STATUS_LABELS = {
+    "download":   "Скачать",
+    "downloaded": "Закачана",
+    "valid":      "Валидна",
+    "installed":  "Установлена",
+    "invalid":    "Невалидна",
+}
+
+# Вердикт по железу: цвет и подпись
+VERDICT_COLORS = {
+    "ok":      "#3c9c3c",
+    "warn":    "#e09020",
+    "no":      "#d9534f",
+    "unknown": "#888888",
+}
+VERDICT_LABELS = {
+    "ok":      "Потянет",
+    "warn":    "Впритык",
+    "no":      "Не потянет",
+    "unknown": "",
+}
+
+# Единый размер кнопок действий
+BTN_WIDTH = 92
 BTN_HEIGHT = 22
 
-# Пропорции колонок 0-4 (в сумме 0.70). Колонка 5 «Действие» получает остаток (~0.30),
-# чтобы кнопки влезли и не было горизонтального скролла.
-COLUMN_PERCENTS = [0.03, 0.27, 0.11, 0.13, 0.15]
+# Пропорции колонок 0-5 (Имя, Тип, Размер, Мин.ОЗУ, Статус, Система).
+# Колонка 6 «Действие» — остаток.
+COLUMN_PERCENTS = [0.26, 0.09, 0.09, 0.10, 0.13, 0.12]
 
-# Разделители строк таблицы (+ вертикальный паддинг, чтобы кнопки влезали по высоте)
 TREE_STYLE = (
     "QTreeWidget::item {"
     "  border-bottom: 1px solid rgba(128, 128, 128, 60);"
     "  padding: 3px 2px;"
     "}"
 )
+
+# Каталог ресурсов для вкладки «Найти» (база в коде, model_sources.json — дополнения)
+RESOURCES = {
+    "diffusers": [
+        {"label": "🌐 HuggingFace — хаб Diffusers",
+         "url": "https://huggingface.co/models?pipeline_tag=text-to-image&sort=downloads",
+         "description": "Главный источник Diffusers-моделей. Ссылка репо (автор/модель) вставляется в «Добавить → По ссылке»."},
+        {"label": "🎨 CivitAI — SDXL-модели сообщества",
+         "url": "https://civitai.com/model-versions?baseModel=SDXL%201.0",
+         "description": "Комьюнити-чекпоинты SDXL (.safetensors) и LoRA. Single-file модели — через «Добавить → С диска»."},
+        {"label": "📦 SDXL Base 1.0 (stabilityai)",
+         "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
+         "description": "Базовая модель Stability: генерация 1024×1024, ~6.9 GB."},
+        {"label": "📦 SDXL Refiner 1.0 (stabilityai)",
+         "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0",
+         "description": "Уточнитель: улучшает детали после базовой модели."},
+    ],
+    "ollama": [
+        {"label": "📦 Ollama Library",
+         "url": "https://ollama.com/library",
+         "description": "Официальный каталог Ollama. Любая модель добавляется по имя:тег через «Добавить → По ссылке»."},
+        {"label": "🤗 HuggingFace — GGUF-файлы",
+         "url": "https://huggingface.co/models?library=gguf&sort=downloads",
+         "description": "GGUF-файлы для Ollama: скачай файл, зарегистрируй через «Добавить → С диска», затем «Установить» в реестре."},
+    ],
+}
+
+
+class SortableItem(QTreeWidgetItem):
+    """Элемент таблицы с числовой сортировкой для колонок Размер/Мин.ОЗУ."""
+    def __lt__(self, other):
+        tree = self.treeWidget()
+        col = tree.sortColumn() if tree else 0
+        a = self.data(col, Qt.ItemDataRole.UserRole + 10)
+        b = other.data(col, Qt.ItemDataRole.UserRole + 10)
+        if a is not None and b is not None:
+            return a < b
+        return (self.text(col) or "") < (other.text(col) or "")
 
 
 class ModelManagerDialog(QDialog):
@@ -66,44 +139,60 @@ class ModelManagerDialog(QDialog):
         self.config = config
         self.resource_manager = resource_manager
         self.setWindowTitle("Менеджер моделей")
-        self.resize(780, 560)
-        self.setMinimumSize(720, 480)
+        self.resize(900, 660)
+        self.setMinimumSize(800, 600)
 
-        # Состояние
-        self._current_downloader = None
-        self._is_downloading = False
-        # Кнопки строк: {(section, source): {"state_btn": ..., "info_btn": ...}}
-        self._row_buttons = {}
-
-        # RAM для вердиктов — УСТАНОВЛЕННАЯ (стабильная, не прыгает)
+        # RAM для вердиктов — УСТАНОВЛЕННАЯ (стабильная)
         vm = psutil.virtual_memory()
         self._total_ram_gb = vm.total / (1024**3)
 
-        # Доступные модели
-        self._available = list_available_models(config)
+        # Состояние загрузки
+        self._current_downloader = None
+        self._is_downloading = False
+        self._row_buttons = {}
+        self._downloading_section = None
+        self._downloading_source = None
+        self._downloading_name = None
 
-        # Установленные модели
-        self._installed_ollama = list_installed_ollama_models(config)
-        self._installed_diffusers_registry = load_registry(config)
+        # Состояние глубокой проверки
+        self._current_verifier = None
+        self._is_verifying = False
+        self._verifying_model_id = None
+        self._verifying_name = None
+
+        # Состояние установки
+        self._current_installer = None
+        self._is_installing = False
+        self._installing_model_id = None
+
+        # Выбранная модель
+        self._selected_model_id = None
+
+        # Загрузка данных (каталог + реестр v3.0 + обнаруженные)
+        self._load_data()
 
         # UI
         self._setup_ui()
-        self._populate_tabs()
+        self._populate_table()
 
-    # === Вердикты (по установленной RAM) ===
+    # === Загрузка данных ===
 
-    def _verdict_level(self, model_info: dict) -> str:
-        """Возвращает 'ok', 'warn' или 'no' на основе min_ram_gb и УСТАНОВЛЕННОЙ RAM."""
-        min_ram = model_info.get("min_ram_gb", 0)
+    def _load_data(self):
+        self._registry_models = list_all_models(self.config)  # вызывает reconcile
+        self._installed_ollama = list_installed_ollama_models(self.config)
+
+    # === Вердикты по установленной RAM ===
+
+    def _verdict_level(self, model_row: dict) -> str:
+        min_ram = model_row.get("min_ram_gb", 0)
         if min_ram <= 0:
-            return "ok"
+            return "unknown"
         total = self._total_ram_gb
         if min_ram <= 0.90 * total:
             return "ok"
         elif min_ram <= 1.05 * total:
             return "warn"
-        else:
-            return "no"
+        return "no"
 
     # === UI ===
 
@@ -112,255 +201,875 @@ class ModelManagerDialog(QDialog):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        # === Блок 1: Список моделей (вкладки) ===
-        table_group = QGroupBox("Список моделей")
-        table_layout = QVBoxLayout(table_group)
+        # === Вкладки: Реестр / Добавить / Найти ===
         self._tabs = QTabWidget()
-        self._tabs.currentChanged.connect(self._on_tab_changed)
-        table_layout.addWidget(self._tabs)
-        layout.addWidget(table_group, 1)
+        layout.addWidget(self._tabs, 1)
 
-        # === Блок 2: Статус загрузки (две строки) ===
-        status_group = QGroupBox("Статус загрузки")
+        # --- Вкладка 1: Реестр ---
+        registry_tab = QWidget()
+        registry_layout = QVBoxLayout(registry_tab)
+        registry_layout.setContentsMargins(6, 6, 6, 6)
+        registry_layout.setSpacing(8)
+
+        # Тулбар фильтров
+        filter_bar = QHBoxLayout()
+        filter_bar.addWidget(QLabel("Тип:"))
+        self._type_filter_combo = QComboBox()
+        self._type_filter_combo.addItem("Все", None)
+        self._type_filter_combo.addItem("Ollama", "ollama")
+        self._type_filter_combo.addItem("Diffusers", "diffusers")
+        self._type_filter_combo.currentIndexChanged.connect(lambda *_: self._apply_filters())
+        filter_bar.addWidget(self._type_filter_combo)
+
+        self._compat_filter_combo = QComboBox()
+        self._compat_filter_combo.addItem("Все вердикты", None)
+        self._compat_filter_combo.addItem("Потянет", "ok")
+        self._compat_filter_combo.addItem("Впритык", "warn")
+        self._compat_filter_combo.addItem("Не потянет", "no")
+        self._compat_filter_combo.addItem("Неизвестно", "unknown")
+        self._compat_filter_combo.currentIndexChanged.connect(lambda *_: self._apply_filters())
+        filter_bar.addWidget(self._compat_filter_combo)
+
+        filter_bar.addStretch()
+
+        self._refresh_btn = QPushButton("Обновить")
+        self._refresh_btn.setToolTip("Перечитать реестр и пересканировать папку моделей")
+        self._refresh_btn.clicked.connect(self._refresh_tabs)
+        filter_bar.addWidget(self._refresh_btn)
+        registry_layout.addLayout(filter_bar)
+
+        # Таблица моделей
+        list_group = QGroupBox("Список моделей")
+        list_layout = QVBoxLayout(list_group)
+        self._tree = self._create_tree_widget()
+        list_layout.addWidget(self._tree)
+        registry_layout.addWidget(list_group, 1)
+
+        # Панель информации: 3 блока с рамками
+        info_bar = QHBoxLayout()
+        info_bar.setSpacing(8)
+
+        # Блок 1: Данные
+        data_group = QGroupBox("Данные")
+        data_group.setFixedWidth(250)
+        data_layout = QVBoxLayout(data_group)
+        self._meta_label = QLabel("Выберите модель")
+        self._meta_label.setWordWrap(True)
+        self._meta_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        data_layout.addWidget(self._meta_label)
+        info_bar.addWidget(data_group)
+
+        # Блок 2: Описание (имя модели + описание)
+        desc_group = QGroupBox("Описание")
+        desc_layout = QVBoxLayout(desc_group)
+        self._desc_label = QLabel("")
+        self._desc_label.setWordWrap(True)
+        self._desc_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        desc_layout.addWidget(self._desc_label)
+        info_bar.addWidget(desc_group, 1)
+
+        # Блок 3: Проверка (чек-лист + хэш-проверка; железо — колонка таблицы)
+        check_group = QGroupBox("Проверка")
+        check_group.setFixedWidth(260)
+        check_layout = QVBoxLayout(check_group)
+        check_layout.setSpacing(6)
+        self._checklist_label = QLabel("")
+        self._checklist_label.setWordWrap(True)
+        self._checklist_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        check_layout.addWidget(self._checklist_label, 1)
+        self._hash_btn = QPushButton("Хэш-проверка")
+        self._hash_btn.setToolTip("Сверка хэшей всех файлов с эталонными (долго)")
+        self._hash_btn.setEnabled(False)
+        self._hash_btn.clicked.connect(self._on_hash_btn_clicked)
+        check_layout.addWidget(self._hash_btn)
+        self._remove_btn = QPushButton("Убрать из списка")
+        self._remove_btn.setToolTip("Удалить запись из реестра (для недоскачанных моделей, файлы не трогаются)")
+        self._remove_btn.setVisible(False)
+        self._remove_btn.clicked.connect(self._on_remove_btn_clicked)
+        check_layout.addWidget(self._remove_btn)
+        info_bar.addWidget(check_group)
+
+        # Обёртка панели с фиксированной высотой
+        info_widget = QWidget()
+        info_widget.setFixedHeight(185)
+        info_widget.setLayout(info_bar)
+        registry_layout.addWidget(info_widget)
+
+        self._tabs.addTab(registry_tab, "Реестр")
+
+        # --- Вкладка 2: Добавить ---
+        self._tabs.addTab(self._build_add_tab(), "Добавить")
+
+        # --- Вкладка 3: Поиск (HuggingFace API) ---
+        self._tabs.addTab(self._build_search_tab(), "Поиск")
+
+        # --- Вкладка 4: Ссылки (внешние ресурсы) ---
+        self._tabs.addTab(self._build_links_tab(), "Ссылки")
+
+        # === Статус-полоса внизу (вне вкладок) ===
+        status_group = QGroupBox("Статус")
         status_layout = QVBoxLayout(status_group)
         status_layout.setSpacing(6)
-
-        # Строка 1: статусбар (растягивается) + чекбокс (фикс. ширина справа)
-        status_row = QHBoxLayout()
         self._status_label = QLabel("Готов к работе")
-        status_row.addWidget(self._status_label, 1)
-        self._compat_checkbox = QCheckBox("Только совместимые")
-        self._compat_checkbox.setFixedWidth(180)
-        self._compat_checkbox.stateChanged.connect(self._on_compat_filter_changed)
-        status_row.addWidget(self._compat_checkbox)
-        status_layout.addLayout(status_row)
-
-        # Строка 2: прогрессбар во всю ширину
+        status_layout.addWidget(self._status_label)
         self._progress_bar = QProgressBar()
         self._progress_bar.setFixedHeight(16)
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(False)
         status_layout.addWidget(self._progress_bar)
-
         layout.addWidget(status_group)
 
-        # === Блок 3: Информация о модели (две колонки, без прокрутки) ===
-        info_group = QGroupBox("Информация о модели")
-        info_group.setFixedHeight(110)
-        info_layout = QHBoxLayout(info_group)
-
-        self._meta_label = QLabel("Выберите модель")
-        self._meta_label.setFixedWidth(220)
-        self._meta_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        info_layout.addWidget(self._meta_label)
-
-        self._desc_label = QLabel("")
-        self._desc_label.setWordWrap(True)
-        self._desc_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        info_layout.addWidget(self._desc_label, 1)
-
-        layout.addWidget(info_group)
-
     def _create_tree_widget(self) -> QTreeWidget:
-        """Создаёт таблицу. Ширины колонок пропорциональны (задаются в _apply_column_widths)."""
         tree = QTreeWidget()
-        tree.setColumnCount(6)
-        tree.setHeaderLabels(["№", "Имя", "Размер", "Мин. ОЗУ", "Статус", "Действие"])
+        tree.setColumnCount(7)
+        tree.setHeaderLabels(["Имя", "Тип", "Размер", "Мин. ОЗУ", "Статус",
+                              "Система", "Действие"])
 
         header = tree.header()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Интерактивный режим: ширины задаём вручную пропорционально, без скролла
-        for col in range(6):
+        for col in range(7):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(False)
 
         tree.setRootIsDecorated(False)
         tree.setUniformRowHeights(True)
         tree.setAlternatingRowColors(True)
-        # Строка при клике не выделяется (детали обновляются через itemClicked)
-        tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         tree.setStyleSheet(TREE_STYLE)
-        tree.itemClicked.connect(self._on_item_clicked)
+        tree.setSortingEnabled(True)  # сортировка кликом по заголовку
+        tree.currentItemChanged.connect(self._on_current_item_changed)
         return tree
 
-    def _apply_column_widths(self, tree: QTreeWidget):
-        """Пропорциональные ширины колонок; «Действие» получает остаток (точно влезает)."""
-        # Запас 22px: резерв под вертикальный скроллбар + люфт,
-        # чтобы его появление не вызывало горизонтальный скролл
-        viewport_w = tree.viewport().width() - 22
+    def _apply_column_widths(self):
+        viewport_w = self._tree.viewport().width() - 22
         if viewport_w <= 10:
             return
         used = 0
         for col, pct in enumerate(COLUMN_PERCENTS):
             w = int(viewport_w * pct)
-            tree.setColumnWidth(col, w)
+            self._tree.setColumnWidth(col, w)
             used += w
-        # Остаток — под кнопки, но не меньше двух кнопок
-        action_w = max(viewport_w - used, BTN_WIDTH * 2 + 24)
-        tree.setColumnWidth(5, action_w)
-
-    def _apply_all_column_widths(self):
-        for i in range(self._tabs.count()):
-            tree = self._tabs.widget(i)
-            if isinstance(tree, QTreeWidget):
-                self._apply_column_widths(tree)
+        action_w = max(viewport_w - used, BTN_WIDTH + 24)
+        self._tree.setColumnWidth(6, action_w)
 
     def resizeEvent(self, event):
-        """При изменении размера окна пересчитываем пропорции колонок (без скролла)."""
         super().resizeEvent(event)
-        QTimer.singleShot(0, self._apply_all_column_widths)
+        QTimer.singleShot(0, self._apply_column_widths)
 
-    def _populate_tabs(self):
-        """Заполняет вкладки моделями с кнопками действий."""
-        self._row_buttons = {}
-        for section_name, models in self._available.items():
-            # Фильтр по features/* (diffusers → sdxl)
+    # === Построение единого списка моделей ===
+
+    def _build_model_list(self) -> list:
+        """Объединяет реестр v3.0 + обнаруженные (оба типа)."""
+        models = []
+        seen = set()
+
+        # 1. Реестр (оба типа)
+        for reg_model in self._registry_models:
+            section_name = reg_model["type"]
             feature = SECTION_TO_FEATURE.get(section_name, section_name)
             if not self.config.get_feature(feature, True):
                 continue
+            ref = reg_model["source"].get("ref", "")
+            if not ref:
+                continue
+            key = (section_name, ref)
+            if key in seen:
+                continue
+            seen.add(key)
+            meta = reg_model.get("meta", {})
+            models.append({
+                "name": reg_model["display_name"],
+                "type": section_name,
+                "size_gb": meta.get("size_gb", 0),
+                "min_ram_gb": meta.get("min_ram_gb", 0),
+                "description": meta.get("description", ""),
+                "source": ref,
+                "status": reg_model["status"],
+                "model_id": reg_model["model_id"],
+                "path": reg_model["paths"].get("installed", ""),
+                "origin": "registry",
+            })
 
-            tab_widget = self._create_tree_widget()
-            row_num = 0
-            for model_info in models:
-                if section_name == "diffusers":
-                    if model_info.get("packaging") != "hf_cache":
-                        continue
+        # 2. Обнаруженные Ollama (fallback: в манифестах, но нет в реестре)
+        if self.config.get_feature("ollama", True):
+            for ollama_name in self._installed_ollama:
+                key = ("ollama", ollama_name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                models.append({
+                    "name": ollama_name,
+                    "type": "ollama",
+                    "size_gb": 0,
+                    "min_ram_gb": 0,
+                    "description": "(обнаружена в папке Ollama)",
+                    "source": ollama_name,
+                    "status": "installed",
+                    "model_id": None,
+                    "path": "",
+                    "origin": "discovered",
+                })
 
-                row_num += 1
-                is_installed = self._is_installed(section_name, model_info)
-                verdict = self._verdict_level(model_info)
+        return models
 
-                name = model_info["name"]
-                size_gb = model_info.get("size_gb", 0)
-                min_ram = model_info.get("min_ram_gb", 0)
-                status_text = "✓ Установлена" if is_installed else "Не установлена"
+    def _find_in_registry(self, section: str, source: str) -> dict:
+        for reg_model in self._registry_models:
+            if reg_model["type"] != section:
+                continue
+            if reg_model["source"].get("ref") == source:
+                return reg_model
+        return None
 
-                item = QTreeWidgetItem([
-                    str(row_num),
-                    name,
-                    f"{size_gb:.1f} GB",
-                    f"{min_ram} GB",
-                    status_text,
-                    ""
-                ])
-                item.setData(0, Qt.ItemDataRole.UserRole, model_info)
-                item.setData(0, Qt.ItemDataRole.UserRole + 1, section_name)
-                item.setData(0, Qt.ItemDataRole.UserRole + 3, verdict)
-                item.setData(0, Qt.ItemDataRole.UserRole + 4, is_installed)
+    # === Заполнение таблицы ===
 
-                # Центрируем служебные колонки (№, Размер, ОЗУ, Статус)
-                for col in (0, 2, 3, 4):
-                    item.setTextAlignment(col, Qt.AlignmentFlag.AlignCenter)
+    def _populate_table(self):
+        selected_id = self._selected_model_id
+        self._row_buttons = {}
+        self._tree.setSortingEnabled(False)  # не сортировать при наполнении
+        self._tree.clear()
+        model_list = self._build_model_list()
 
-                # Приглушаем ⚠ (но не скрываем)
-                if verdict == "warn":
-                    dim_color = self.palette().color(QPalette.ColorRole.WindowText)
-                    dim_color.setAlpha(120)
-                    for col in range(6):
-                        item.setForeground(col, QBrush(QColor(dim_color)))
+        for model_row in model_list:
+            status = model_row["status"]
+            status_text = STATUS_LABELS.get(status, status)
+            status_color = STATUS_COLORS.get(status, (150, 150, 150))
+            size_gb = model_row["size_gb"]
+            min_ram = model_row["min_ram_gb"]
+            type_label = "Ollama" if model_row["type"] == "ollama" else "Diffusers"
+            verdict = self._verdict_level(model_row)
+            verdict_text = "●"  # индикатор вместо текста
+            verdict_color = QColor(VERDICT_COLORS[verdict])
+            verdict_rank = {"ok": 0, "warn": 1, "no": 2, "unknown": 3}[verdict]
 
-                tab_widget.addTopLevelItem(item)
+            item = SortableItem([
+                model_row["name"],
+                type_label,
+                f"{size_gb:.1f} GB" if size_gb > 0 else "—",
+                f"{min_ram} GB" if min_ram > 0 else "—",
+                status_text,
+                verdict_text,
+                ""
+            ])
+            item.setData(0, Qt.ItemDataRole.UserRole, model_row)
+            # Числовые значения для сортировки (Размер, Мин. ОЗУ, Система)
+            item.setData(2, Qt.ItemDataRole.UserRole + 10, float(size_gb))
+            item.setData(3, Qt.ItemDataRole.UserRole + 10, float(min_ram))
+            item.setData(5, Qt.ItemDataRole.UserRole + 10, verdict_rank)
 
-                # Виджет с кнопками действий (2 кнопки одинакового размера)
-                action_widget = QWidget()
-                action_layout = QHBoxLayout(action_widget)
-                action_layout.setContentsMargins(4, 2, 4, 2)
-                action_layout.setSpacing(6)
+            for col in (1, 2, 3, 4, 5):
+                item.setTextAlignment(col, Qt.AlignmentFlag.AlignCenter)
+            item.setForeground(4, QBrush(QColor(*status_color)))
+            item.setForeground(5, QBrush(verdict_color))
 
-                info_btn = QPushButton()
-                info_btn.setFixedSize(BTN_WIDTH, BTN_HEIGHT)
-                state_btn = QPushButton()
-                state_btn.setFixedSize(BTN_WIDTH, BTN_HEIGHT)
+            # Приглушаем несовместимые (вердикт ❌), Статус и Система не трогаем
+            if verdict == "no":
+                dim = QColor(150, 150, 150)
+                for col in range(7):
+                    if col not in (4, 5):
+                        item.setForeground(col, QBrush(dim))
 
-                if is_installed:
-                    info_btn.setText("🔍 Проверить")
-                    info_btn.setToolTip("Проверить целостность модели")
-                    info_btn.clicked.connect(
-                        lambda checked, m=model_info, s=section_name: self._validate_model(s, m))
-                    state_btn.setText("🗑 Удалить")
-                    state_btn.setToolTip("Удалить модель")
-                    state_btn.clicked.connect(
-                        lambda checked, m=model_info, s=section_name: self._delete_model(s, m))
-                else:
-                    info_btn.setText("❔ Вердикт")
-                    info_btn.setToolTip("Вердикт по железу (ОЗУ)")
-                    info_btn.clicked.connect(
-                        lambda checked, m=model_info, s=section_name: self._show_verdict(s, m))
-                    state_btn.setText("⬇ Загрузить")
-                    state_btn.setToolTip("Скачать модель")
-                    state_btn.clicked.connect(
-                        lambda checked, m=model_info, s=section_name: self._download_model(s, m))
+            self._tree.addTopLevelItem(item)
+            self._create_action_button(item, model_row)
 
-                action_layout.addWidget(info_btn)
-                action_layout.addWidget(state_btn)
-                tab_widget.setItemWidget(item, 5, action_widget)
+        self._tree.setSortingEnabled(True)
+        self._apply_filters()
 
-                key = (section_name, model_info.get("source", name))
-                self._row_buttons[key] = {"state_btn": state_btn, "info_btn": info_btn}
+        # Восстановление выделения и панели
+        if selected_id and self._select_model_by_id(selected_id):
+            pass
+        else:
+            self._reset_details()
 
-            self._tabs.addTab(tab_widget, section_name.capitalize())
+        QTimer.singleShot(0, self._apply_column_widths)
 
-        # Применяем фильтр сразу
-        self._on_compat_filter_changed(self._compat_checkbox.checkState())
-        # Пропорции колонок — после того, как вкладки получили размер
-        QTimer.singleShot(0, self._apply_all_column_widths)
+    def _create_action_button(self, item, model_row):
+        """Одна кнопка действия в строке (зависит от статуса)."""
+        status = model_row["status"]
+        state_btn = QPushButton()
+        state_btn.setFixedSize(BTN_WIDTH, BTN_HEIGHT)
+        m = model_row
 
-    def _is_installed(self, section: str, model_info: dict) -> bool:
-        if section == "ollama":
-            return model_info["source"] in self._installed_ollama
-        elif section == "diffusers":
-            source = model_info["source"]
-            for info in self._installed_diffusers_registry.values():
-                if isinstance(info, dict) and info.get("full_name") == source:
-                    return True
-            return False
+        if status == "download":
+            state_btn.setText("Загрузить")
+            state_btn.setToolTip("Скачать модель")
+            state_btn.clicked.connect(lambda checked, m=m: self._download_model(m))
+        elif status == "valid":
+            state_btn.setText("Установить")
+            state_btn.setToolTip("Переместить в папку моделей")
+            state_btn.clicked.connect(lambda checked, m=m: self._install_model(m))
+        elif status == "invalid":
+            state_btn.setText("Удалить")
+            state_btn.setToolTip("Удалить битую модель (файлы + запись из реестра)")
+            state_btn.clicked.connect(lambda checked, m=m: self._delete_model(m))
+        else:  # downloaded, installed
+            state_btn.setText("Удалить")
+            state_btn.setToolTip("Удалить модель")
+            state_btn.clicked.connect(lambda checked, m=m: self._delete_model(m))
+
+        # Кнопка по центру колонки «Действие»
+        action_widget = QWidget()
+        action_layout = QHBoxLayout(action_widget)
+        action_layout.setContentsMargins(2, 2, 2, 2)
+        action_layout.addStretch()
+        action_layout.addWidget(state_btn)
+        action_layout.addStretch()
+        self._tree.setItemWidget(item, 6, action_widget)
+
+        key = (model_row["type"], model_row.get("source", model_row["name"]))
+        self._row_buttons[key] = {"state_btn": state_btn}
+
+    def _select_model_by_id(self, model_id: str) -> bool:
+        """Находит строку по model_id, выделяет её и обновляет панель."""
+        for j in range(self._tree.topLevelItemCount()):
+            item = self._tree.topLevelItem(j)
+            row = item.data(0, Qt.ItemDataRole.UserRole)
+            if row and row.get("model_id") == model_id:
+                self._tree.setCurrentItem(item)
+                self._update_details(row)
+                return True
         return False
 
-    # === Панель деталей (две колонки: метаданные + описание) ===
+    def _get_selected_row(self) -> dict:
+        item = self._tree.currentItem()
+        if item:
+            return item.data(0, Qt.ItemDataRole.UserRole)
+        return None
 
-    def _on_item_clicked(self, item, column):
-        """Клик по строке обновляет детали (без выделения строки)."""
-        self._update_details(item)
+    # === Вкладка «Добавить» ===
 
-    def _update_details(self, item):
-        """Только метаданные + описание. Без вердиктов и без «у вас установлено»."""
-        model_info = item.data(0, Qt.ItemDataRole.UserRole)
+    def _build_add_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
 
-        name = model_info["name"]
-        source = model_info.get("source", "")
-        size_gb = model_info.get("size_gb", 0)
-        min_ram = model_info.get("min_ram_gb", 0)
-        tag = model_info.get("tag", "")
-        description = model_info.get("description", "")
+        # Группа: по ссылке
+        link_group = QGroupBox("По ссылке")
+        link_layout = QVBoxLayout(link_group)
+        link_layout.addWidget(QLabel(
+            "Для Ollama — имя:тег (например, <b>qwen2.5:14b</b>). "
+            "Для Diffusers — репозиторий (например, "
+            "<b>stabilityai/stable-diffusion-xl-base-1.0</b>). "
+            "Модель появится в «Реестре» со статусом «Скачать»."))
+        link_row = QHBoxLayout()
+        link_row.addWidget(QLabel("Тип:"))
+        self._link_type_combo = QComboBox()
+        self._link_type_combo.addItems(["Ollama", "Diffusers"])
+        link_row.addWidget(self._link_type_combo)
+        self._link_edit = QLineEdit()
+        self._link_edit.setPlaceholderText(
+            "Ollama: qwen2.5:14b   /   Diffusers: автор/модель")
+        self._link_edit.returnPressed.connect(self._add_by_link)
+        link_row.addWidget(self._link_edit, 1)
+        link_btn = QPushButton("Добавить")
+        link_btn.clicked.connect(self._add_by_link)
+        link_row.addWidget(link_btn)
+        link_layout.addLayout(link_row)
+        layout.addWidget(link_group)
 
-        meta = f"<b>{name}</b><br>"
-        meta += f"Тег: {tag}<br>"
-        meta += f"Размер: {size_gb:.1f} GB<br>"
-        meta += f"Мин. ОЗУ: {min_ram} GB<br>"
-        meta += f"Источник: {source}"
+        # Группа: с диска
+        disk_group = QGroupBox("С диска")
+        disk_layout = QVBoxLayout(disk_group)
+        disk_layout.addWidget(QLabel(
+            "Для Diffusers — папка <b>models--*</b> или распакованная папка "
+            "(через «Обзор»), файл .safetensors/.ckpt (вписать путь вручную). "
+            "Для Ollama — файл <b>.gguf</b>: после регистрации нажмите "
+            "«Установить» в «Реестре»."))
+        disk_row = QHBoxLayout()
+        disk_row.addWidget(QLabel("Тип:"))
+        self._disk_type_combo = QComboBox()
+        self._disk_type_combo.addItems(["Diffusers", "Ollama"])
+        disk_row.addWidget(self._disk_type_combo)
+        self._disk_path_edit = QLineEdit()
+        self._disk_path_edit.setPlaceholderText("Путь к модели или файлу")
+        disk_row.addWidget(self._disk_path_edit, 1)
+        browse_btn = QPushButton("Обзор...")
+        browse_btn.clicked.connect(self._browse_disk_path)
+        disk_row.addWidget(browse_btn)
+        disk_btn = QPushButton("Добавить")
+        disk_btn.clicked.connect(self._add_from_disk)
+        disk_row.addWidget(disk_btn)
+        disk_layout.addLayout(disk_row)
+        layout.addWidget(disk_group)
 
-        self._meta_label.setText(meta)
-        self._desc_label.setText(description)
+        layout.addStretch()
+        return tab
 
-    def _on_tab_changed(self, index):
-        """Фикс бага: при переключении вкладки инфо-поле сбрасывается."""
+    def _browse_disk_path(self):
+        model_type = ("ollama"
+                      if self._disk_type_combo.currentText() == "Ollama"
+                      else "diffusers")
+        if model_type == "ollama":
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Выберите GGUF-файл", os.path.expanduser("~"),
+                "GGUF-модели (*.gguf)")
+        else:
+            path = QFileDialog.getExistingDirectory(
+                self, "Выберите папку модели (models--* или распакованную)",
+                os.path.expanduser("~"))
+        if path:
+            self._disk_path_edit.setText(path)
+
+    def _add_by_link(self):
+        ref = self._link_edit.text().strip()
+        if not ref:
+            self._make_msg_box(QMessageBox.Icon.Warning, "Добавление",
+                               "Укажите ссылку (имя:тег или репозиторий).").exec()
+            return
+        model_type = ("ollama"
+                      if self._link_type_combo.currentText() == "Ollama"
+                      else "diffusers")
+        if model_type == "diffusers" and "/" not in ref:
+            self._make_msg_box(QMessageBox.Icon.Warning, "Добавление",
+                               "Для Diffusers укажите репо в формате "
+                               "«автор/модель».").exec()
+            return
+        if model_type == "ollama" and ":" not in ref:
+            ref = ref + ":latest"
+        model_id = add_model_by_ref(self.config, ref, model_type)
+        if not model_id:
+            self._make_msg_box(QMessageBox.Icon.Warning, "Добавление",
+                               "Не удалось добавить модель.").exec()
+            return
+        self._link_edit.clear()
+        self._status_label.setText(f"✓ Добавлено: {ref} — статус «Скачать»")
+        self._goto_registry(model_id)
+
+    def _add_from_disk(self):
+        path = self._disk_path_edit.text().strip()
+        if not path or not os.path.exists(path):
+            self._make_msg_box(QMessageBox.Icon.Warning, "Добавление",
+                               "Укажите существующий путь.").exec()
+            return
+        model_type = ("ollama"
+                      if self._disk_type_combo.currentText() == "Ollama"
+                      else "diffusers")
+        model_id = register_from_path(path, model_type, self.config)
+        if not model_id:
+            self._make_msg_box(
+                QMessageBox.Icon.Warning, "Добавление",
+                "Не удалось зарегистрировать модель (неопознанный формат).\n"
+                "Diffusers: папка models--*, распакованная папка с "
+                "model_index.json или файл .safetensors/.ckpt.\n"
+                "Ollama: файл .gguf.").exec()
+            return
+        self._disk_path_edit.clear()
+        self._status_label.setText(
+            f"✓ Зарегистрировано: {os.path.basename(path)}")
+        self._goto_registry(model_id)
+
+    def _goto_registry(self, model_id: str):
+        """Переключает на «Реестр» и выделяет добавленную модель."""
+        self._selected_model_id = model_id
+        self._refresh_tabs()
+        self._tabs.setCurrentIndex(0)
+
+    # === Вкладка «Найти» ===
+
+    def _build_search_tab(self) -> QWidget:
+        """Вкладка «Поиск»: поиск моделей на HuggingFace через API."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        # Поисковая строка
+        search_bar = QHBoxLayout()
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("Введите запрос: realistic portrait, sdxl base...")
+        self._search_input.returnPressed.connect(self._on_search_clicked)
+        search_bar.addWidget(self._search_input, 1)
+
+        self._search_btn = QPushButton("Искать")
+        self._search_btn.clicked.connect(self._on_search_clicked)
+        search_bar.addWidget(self._search_btn)
+        layout.addLayout(search_bar)
+
+        # Фильтры
+        filters_bar = QHBoxLayout()
+        filters_bar.addWidget(QLabel("База:"))
+        self._base_filter = QComboBox()
+        self._base_filter.addItems(["Все", "SDXL", "Flux", "SD1.5", "SD3"])
+        self._base_filter.setCurrentIndex(1)  # По умолчанию SDXL
+        filters_bar.addWidget(self._base_filter)
+
+        filters_bar.addWidget(QLabel("Категория:"))
+        self._category_filter = QComboBox()
+        self._category_filter.addItems(["Все", "Чекпоинты", "LoRA", "VAE"])
+        self._category_filter.setCurrentIndex(1)  # По умолчанию Чекпоинты
+        filters_bar.addWidget(self._category_filter)
+
+        self._show_nsfw_cb = QCheckBox("Показывать NSFW")
+        self._show_nsfw_cb.setChecked(False)  # Дефолт: безопасно
+        filters_bar.addWidget(self._show_nsfw_cb)
+
+        filters_bar.addStretch()
+        layout.addLayout(filters_bar)
+
+        # Список результатов
+        self._search_results = QListWidget()
+        self._search_results.setAlternatingRowColors(True)
+        self._search_results.itemDoubleClicked.connect(self._on_open_in_browser_clicked)
+        layout.addWidget(self._search_results, 1)
+
+        # Кнопки действий с выбранной моделью
+        add_bar = QHBoxLayout()
+        add_bar.addStretch()
+        self._open_in_browser_btn = QPushButton("Открыть в браузере")
+        self._open_in_browser_btn.setToolTip(
+            "Открыть страницу модели на HuggingFace (примеры генераций, описание, теги)")
+        self._open_in_browser_btn.setEnabled(False)
+        self._open_in_browser_btn.clicked.connect(self._on_open_in_browser_clicked)
+        add_bar.addWidget(self._open_in_browser_btn)
+
+        self._add_from_search_btn = QPushButton("Добавить в реестр")
+        self._add_from_search_btn.setToolTip(
+            "Добавить выбранную модель в реестр для последующего скачивания")
+        self._add_from_search_btn.setEnabled(False)
+        self._add_from_search_btn.clicked.connect(self._on_add_from_search_clicked)
+        add_bar.addWidget(self._add_from_search_btn)
+        layout.addLayout(add_bar)
+
+        # Состояние поиска
+        self._search_worker = None
+        self._search_results_list = []
+
+        # Активация обеих кнопок при выборе
+        self._search_results.currentItemChanged.connect(self._on_search_selection_changed)
+
+        return tab
+
+    def _on_search_selection_changed(self, current, previous):
+        """Активация кнопок при выборе строки в списке результатов."""
+        has_selection = current is not None
+        self._add_from_search_btn.setEnabled(has_selection)
+        self._open_in_browser_btn.setEnabled(has_selection)
+
+    def _on_open_in_browser_clicked(self, item=None):
+        """Открывает страницу выбранной модели на HuggingFace в браузере.
+
+        Вызывается:
+        - по кнопке «Открыть в браузере»
+        - по двойному клику на элемент списка
+        """
+        current = self._search_results.currentRow()
+        if current < 0 or current >= len(self._search_results_list):
+            return
+        model = self._search_results_list[current]
+        url = model.get('url', '')
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
+
+    def _on_search_clicked(self):
+        """Запуск поиска на HuggingFace."""
+        query = self._search_input.text().strip()
+        if not query:
+            self._search_results.clear()
+            self._search_results_list = []
+            self._search_results.addItem("Введите запрос для поиска")
+            return
+
+        self._search_btn.setEnabled(False)
+        self._search_btn.setText("Поиск...")
+        self._search_results.clear()
+        self._search_results.addItem("Ищу модели...")
+
+        base = self._base_filter.currentText()
+        category = self._category_filter.currentText()
+        show_nsfw = self._show_nsfw_cb.isChecked()
+        self._search_worker = HFSearchWorker(query, base, category, show_nsfw)
+        self._search_worker.results_ready.connect(self._on_search_results_ready)
+        self._search_worker.error_occurred.connect(self._on_search_error)
+        self._search_worker.start()
+
+    def _on_search_results_ready(self, results: list):
+        """Обработка результатов поиска."""
+        self._search_btn.setEnabled(True)
+        self._search_btn.setText("Искать")
+        self._search_results.clear()
+        self._search_results_list = results
+
+        if not results:
+            self._search_results.addItem("Ничего не найдено")
+            return
+
+        for r in results:
+            size_str = f"{r['size_gb']:.1f} GB" if r['size_gb'] > 0 else "?"
+            tags_str = ", ".join(r['tags'][:3])
+            text = f"{r['name']}\n"
+            text += f"Загрузок: {r['downloads']:,}  Лайков: {r['likes']}  Размер: {size_str}  [{r['base']}]\n"
+            text += f"{tags_str}\n"
+            if r['description']:
+                text += f"{r['description'][:80]}..."
+            item = QListWidgetItem(text)
+            self._search_results.addItem(item)
+
+    def _on_search_error(self, msg: str):
+        """Обработка ошибки поиска."""
+        self._search_btn.setEnabled(True)
+        self._search_btn.setText("Искать")
+        self._search_results.clear()
+        self._search_results.addItem(f"Ошибка: {msg}")
+
+    def _on_add_from_search_clicked(self):
+        """Добавление выбранной модели в реестр."""
+        current = self._search_results.currentRow()
+        if current < 0 or current >= len(self._search_results_list):
+            return
+
+        model = self._search_results_list[current]
+        ref = model['ref']
+        try:
+            model_id = add_model_by_ref(self.config, ref, "diffusers")
+            self._status_label.setText(f"Добавлено: {model['name']}")
+            self._refresh_tabs()
+            self._tabs.setCurrentIndex(0)
+            for j in range(self._tree.topLevelItemCount()):
+                item = self._tree.topLevelItem(j)
+                row = item.data(0, Qt.ItemDataRole.UserRole)
+                if row and row.get('model_id') == model_id:
+                    self._tree.setCurrentItem(item)
+                    break
+        except Exception as e:
+            self._status_label.setText(f"Ошибка добавления: {e}")
+
+
+    def _build_links_tab(self) -> QWidget:
+        """Вкладка «Ссылки»: список внешних ресурсов."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        layout.addWidget(QLabel(
+            "Внешние ресурсы для поиска моделей. Двойной клик — открыть в браузере."))
+
+        self._resources_tree = QTreeWidget()
+        self._resources_tree.setColumnCount(2)
+        self._resources_tree.setHeaderLabels(["Ресурс", "Описание"])
+        self._resources_tree.setRootIsDecorated(True)
+        self._resources_tree.setUniformRowHeights(False)
+        self._resources_tree.setWordWrap(True)
+        header = self._resources_tree.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(True)
+
+        bold = QFont()
+        bold.setBold(True)
+        resources = self._build_resources()
+        for group_title, key in (("Diffusers / SDXL", "diffusers"),
+                                 ("Ollama", "ollama")):
+            group = QTreeWidgetItem([group_title, ""])
+            group.setFont(0, bold)
+            self._resources_tree.addTopLevelItem(group)
+            for r in resources[key]:
+                item = QTreeWidgetItem([r["label"], r["description"]])
+                item.setData(0, Qt.ItemDataRole.UserRole, r["url"])
+                group.addChild(item)
+            group.setExpanded(True)
+
+        self._resources_tree.itemDoubleClicked.connect(
+            self._on_resource_double_clicked)
+        layout.addWidget(self._resources_tree, 1)
+        return tab
+
+    def _build_resources(self) -> dict:
+        """Ресурсы: базовый каталог (в коде) + дополнения из model_sources.json."""
+        resources = {k: list(v) for k, v in RESOURCES.items()}
+        seen_urls = {r["url"] for entries in resources.values() for r in entries}
+        try:
+            extra = PathsManager().get_model_sources()
+        except Exception:
+            extra = {}
+        for section, key in (("sdxl", "diffusers"), ("ollama", "ollama")):
+            for entry in extra.get(section, []):
+                url = entry.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    resources[key].append({
+                        "label": entry.get("label", url),
+                        "url": url,
+                        "description": entry.get("description", ""),
+                    })
+        return resources
+
+    def _on_resource_double_clicked(self, item, column):
+        url = item.data(0, Qt.ItemDataRole.UserRole)
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
+
+    # === Фильтры (тип + совместимость) ===
+
+    def _apply_filters(self):
+        type_filter = self._type_filter_combo.currentData()
+        compat_filter = self._compat_filter_combo.currentData()
+        for j in range(self._tree.topLevelItemCount()):
+            item = self._tree.topLevelItem(j)
+            model_row = item.data(0, Qt.ItemDataRole.UserRole)
+            hidden = False
+            if type_filter and model_row["type"] != type_filter:
+                hidden = True
+            if compat_filter and self._verdict_level(model_row) != compat_filter:
+                hidden = True
+            item.setHidden(hidden)
+
+    # === Панель информации (3 блока) ===
+
+    def _on_current_item_changed(self, item, previous):
+        if item is None:
+            return
+        model_row = item.data(0, Qt.ItemDataRole.UserRole)
+        if model_row:
+            self._selected_model_id = model_row.get("model_id")
+            self._update_details(model_row)
+
+    def _reset_details(self):
         self._meta_label.setText("Выберите модель")
+        self._meta_label.setToolTip("")
         self._desc_label.setText("")
+        self._checklist_label.setText("")
+        self._hash_btn.setEnabled(False)
+        self._remove_btn.setVisible(False)
 
-    def _on_compat_filter_changed(self, state):
-        """Скрывает ТОЛЬКО модели с вердиктом ❌ (не трогает ⚠)."""
-        hide_incompatible = (state == Qt.CheckState.Checked.value)
-        for i in range(self._tabs.count()):
-            tab_widget = self._tabs.widget(i)
-            if not isinstance(tab_widget, QTreeWidget):
-                continue
-            for j in range(tab_widget.topLevelItemCount()):
-                item = tab_widget.topLevelItem(j)
-                verdict = item.data(0, Qt.ItemDataRole.UserRole + 3)
-                if verdict == "no":
-                    item.setHidden(hide_incompatible)
-                else:
-                    item.setHidden(False)
+    def _update_details(self, model_row: dict):
+        # Блок 1: Данные (без имени — оно в «Описании»; путь в одну строку)
+        name = model_row["name"]
+        source = model_row.get("source", "")
+        size_gb = model_row.get("size_gb", 0)
+        min_ram = model_row.get("min_ram_gb", 0)
+        path = model_row.get("path", "")
+
+        meta = f"Размер: {size_gb:.1f} GB<br>" if size_gb > 0 else "Размер: —<br>"
+        meta += f"Мин. ОЗУ: {min_ram} GB<br>" if min_ram > 0 else "Мин. ОЗУ: —<br>"
+        meta += f"Источник: {source}"
+        if path:
+            meta += f"<br>Путь: {self._short_path(path)}"
+        self._meta_label.setText(meta)
+        self._meta_label.setToolTip(path or "")
+
+        # Блок 2: Описание (имя модели + описание)
+        accent = self.palette().color(QPalette.ColorRole.Link).name()
+        desc_html = f'<b><span style="color:{accent};">{name}</span></b><br><br>'
+        desc_html += model_row.get("description", "") or ""
+        self._desc_label.setText(desc_html)
+
+        # Блок 3: Проверка
+        self._update_checklist(model_row)
+        self._update_hash_btn(model_row)
+        self._update_remove_btn(model_row)
+
+    def _short_path(self, path: str, max_len: int = 38) -> str:
+        """Сокращает путь до одной строки: начало…хвост (хвост важнее)."""
+        if len(path) <= max_len:
+            return path
+        head_len = max_len // 3
+        tail_len = max_len - head_len - 1
+        return path[:head_len] + "…" + path[-tail_len:]
+
+    def _update_checklist(self, model_row: dict):
+        status = model_row["status"]
+        section = model_row["type"]
+
+        if status == "download":
+            self._checklist_label.setText("<i>Модель не скачана</i>")
+            return
+
+        # Быстрая проверка с построчным результатом
+        try:
+            if section == "ollama":
+                pm = PathsManager()
+                ollama_path = pm.get_path(self.config, "ollama_models")
+                valid, items = validate_ollama_model_detailed(
+                    model_row.get("source", ""), ollama_path)
+            else:
+                path = model_row.get("path", "")
+                if not path or not os.path.exists(path):
+                    self._checklist_label.setText("<i>Путь не найден</i>")
+                    return
+                valid, items = validate_model_fast_detailed(path)
+        except Exception as e:
+            self._checklist_label.setText(f"<i>Ошибка проверки: {e}</i>")
+            return
+
+        lines = []
+        for it in items:
+            if it.passed:
+                mark = '<span style="color:#3c9c3c;">✓</span>'
+                lines.append(f"{mark} {it.name}")
+            else:
+                mark = '<span style="color:#d9534f;">✗</span>'
+                det = f' <span style="color:gray;">— {it.details}</span>' if it.details else ""
+                lines.append(f"{mark} {it.name}{det}")
+
+        # Строка SHA256 — из реестра (если глубокая проверка уже была)
+        lines.append(self._sha256_line(model_row))
+
+        self._checklist_label.setText("<br>".join(lines))
+
+    def _sha256_line(self, model_row: dict) -> str:
+        model_id = model_row.get("model_id")
+        if not model_id:
+            return '<span style="color:gray;">— SHA256 (не проверялась)</span>'
+        reg = next((m for m in self._registry_models
+                    if m["model_id"] == model_id), None)
+        if not reg:
+            return '<span style="color:gray;">— SHA256 (не проверялась)</span>'
+        validation = reg.get("validation", {})
+        if validation.get("last_method") == "deep":
+            if validation.get("last_result") == "valid":
+                return '<span style="color:#3c9c3c;">✓ SHA256</span>'
+            errors = validation.get("errors", [])
+            det = f' <span style="color:gray;">— {errors[0]}</span>' if errors else ""
+            return f'<span style="color:#d9534f;">✗ SHA256</span>{det}'
+        return '<span style="color:gray;">— SHA256 (не проверялась)</span>'
+
+    def _update_hash_btn(self, model_row: dict):
+        if self._is_verifying or self._is_downloading:
+            self._hash_btn.setEnabled(False)
+            return
+        status = model_row["status"]
+        self._hash_btn.setEnabled(status in ("downloaded", "valid", "installed", "invalid"))
+
+    def _on_hash_btn_clicked(self):
+        row = self._get_selected_row()
+        if row:
+            self._deep_validate_model(row)
+
+    def _update_remove_btn(self, model_row: dict):
+        """Кнопка «Убрать из списка» показана для недоскачанных и битых моделей.
+
+        Для скачанных/установленных моделей кнопка скрыта,
+        чтобы не занимать место в блоке «Проверка» рядом с чек-листом.
+        """
+        if self._is_verifying or self._is_downloading:
+            self._remove_btn.setVisible(False)
+            return
+        status = model_row.get("status", "")
+        # Показываем только для: "download" (недоскачана, файлов нет)
+        # Для "invalid" (битая) есть кнопка "Удалить" в строке таблицы
+        self._remove_btn.setVisible(status == "download")
+
+    def _on_remove_btn_clicked(self):
+        row = self._get_selected_row()
+        if not row:
+            return
+        source_ref = row.get("source", "")
+        model_id = row.get("model_id")
+        if not source_ref and not model_id:
+            return
+        box = self._make_msg_box(
+            QMessageBox.Icon.Question, "Удаление из реестра",
+            f"Удалить запись о модели:\n\n<b>{row['name']}</b>\n\n"
+            "Это удалит только запись из реестра, файлы не трогаются.\n"
+            "Модель можно будет добавить заново по ссылке.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if box.exec() != QMessageBox.StandardButton.Yes:
+            return
+        if source_ref:
+            remove_model_from_registry(self.config, source_ref)
+        self._selected_model_id = None
+        self._status_label.setText(f"Удалено из реестра: {row['name']}")
+        self._refresh_tabs()
 
     # === Проверка занятости ресурса ===
 
@@ -370,7 +1079,6 @@ class ModelManagerDialog(QDialog):
 
     def _make_msg_box(self, icon, title, text,
                       buttons=QMessageBox.StandardButton.Ok) -> QMessageBox:
-        """Явный QMessageBox с DontUseNativeDialog — фикс краша в деструкторе на KDE."""
         box = QMessageBox(self)
         box.setOption(QMessageBox.Option.DontUseNativeDialog)
         box.setIcon(icon)
@@ -389,26 +1097,31 @@ class ModelManagerDialog(QDialog):
 
     # === Скачивание ===
 
-    def _download_model(self, section: str, model_info: dict):
+    def _download_model(self, model_row: dict):
         if self._is_downloading:
             return
         if self._is_resource_busy():
             self._show_busy_warning()
             return
 
+        section = model_row["type"]
         self._is_downloading = True
-        self._set_downloading_ui(section, model_info.get("source", ""))
+        self._downloading_section = section
+        self._downloading_source = model_row.get("source", "")
+        self._downloading_name = model_row["name"]
+        self._set_downloading_ui(section, model_row.get("source", ""))
 
+        self._progress_bar.setVisible(True)
         self._progress_bar.setValue(0)
-        self._status_label.setText(f"Начинаем скачивание {model_info['name']}...")
+        self._status_label.setText(f"Начинаем скачивание {model_row['name']}...")
 
-        size_gb = model_info.get("size_gb", 2.0)
+        size_gb = model_row.get("size_gb", 2.0) or 2.0
         if section == "ollama":
-            self._current_downloader = OllamaDownloader(self.config, model_info["source"])
+            self._current_downloader = OllamaDownloader(self.config, model_row["source"])
             self._current_downloader.set_model_size(size_gb)
         elif section == "diffusers":
-            self._current_downloader = DiffusersDownloader(self.config, model_info["name"])
-            self._current_downloader.set_repo_id(model_info["source"])
+            self._current_downloader = DiffusersDownloader(self.config, model_row["name"])
+            self._current_downloader.set_repo_id(model_row["source"])
             self._current_downloader.set_model_size(size_gb)
 
         self._current_downloader.progress_updated.connect(self._on_progress)
@@ -417,24 +1130,20 @@ class ModelManagerDialog(QDialog):
         self._current_downloader.start()
 
     def _set_downloading_ui(self, section: str, source: str):
-        """Все кнопки блокируются, кроме «Отменить» у загружаемой модели."""
         current_key = (section, source)
         for key, btns in self._row_buttons.items():
             state_btn = btns["state_btn"]
-            info_btn = btns["info_btn"]
             if key == current_key:
                 try:
                     state_btn.clicked.disconnect()
                 except TypeError:
                     pass
-                state_btn.setText("✕ Отменить")
+                state_btn.setText("Отменить")
                 state_btn.setToolTip("Отменить скачивание")
                 state_btn.clicked.connect(self._cancel_download)
                 state_btn.setEnabled(True)
-                info_btn.setEnabled(False)
             else:
                 state_btn.setEnabled(False)
-                info_btn.setEnabled(False)
 
     def _on_progress(self, percent: int, message: str):
         self._progress_bar.setValue(percent)
@@ -445,7 +1154,13 @@ class ModelManagerDialog(QDialog):
         self._current_downloader = None
         self._progress_bar.setValue(100 if success else 0)
         self._refresh_tabs()
-        self._status_label.setText(f"✓ {message}" if success else f"✗ {message}")
+        if success:
+            self._status_label.setText(f"✓ {message}")
+            # Автопроверка целостности (хэши) после успешной загрузки
+            self._auto_deep_check_after_download()
+        else:
+            self._status_label.setText(f"✗ {message}")
+            QTimer.singleShot(3000, lambda: self._progress_bar.setVisible(False))
 
     def _on_download_error(self, error_msg: str):
         self._status_label.setText(f"✗ {error_msg}")
@@ -455,15 +1170,246 @@ class ModelManagerDialog(QDialog):
             self._status_label.setText("Отмена скачивания...")
             self._current_downloader.cancel()
 
-    # === Удаление ===
+    # === Полная (хэш) проверка ===
 
-    def _delete_model(self, section: str, model_info: dict):
+    def _deep_validate_model(self, model_row: dict):
+        if self._is_downloading or self._is_verifying:
+            return
         if self._is_resource_busy():
             self._show_busy_warning()
             return
 
-        name = model_info["name"]
-        source = model_info.get("source", "")
+        section = model_row["type"]
+        model_id = model_row.get("model_id")
+        if not model_id:
+            self._make_msg_box(QMessageBox.Icon.Warning, "Проверка",
+                               "Модель не зарегистрирована в реестре.\n"
+                               "Добавьте её через вкладку «Добавить».").exec()
+            return
+
+        if section == "ollama":
+            target = model_row.get("source", "")
+        else:
+            target = model_row.get("path", "")
+            if not target or not os.path.exists(target):
+                self._make_msg_box(QMessageBox.Icon.Warning, "Проверка",
+                                   "Путь к модели не найден").exec()
+                return
+
+        self._start_deep_validation(section, model_id, target, model_row["name"])
+
+    def _auto_deep_check_after_download(self):
+        section = self._downloading_section
+        source = self._downloading_source
+        if not section or not source:
+            return
+        reg = self._find_in_registry(section, source)
+        if not reg:
+            self._status_label.setText(
+                "✓ Загружено. Модель не найдена в реестре — проверьте вручную.")
+            return
+        model_id = reg["model_id"]
+        if section == "ollama":
+            target = source
+        else:
+            target = reg["paths"].get("installed", "")
+            if not target or not os.path.exists(target):
+                self._status_label.setText(
+                    "✓ Загружено. Путь не найден — проверьте вручную.")
+                return
+        name = self._downloading_name or reg.get("display_name", source)
+        self._start_deep_validation(section, model_id, target, name)
+
+    def _start_deep_validation(self, section: str, model_id: str, target: str,
+                               model_name: str):
+        if self._is_verifying or self._is_downloading:
+            return
+        self._is_verifying = True
+        self._verifying_model_id = model_id
+        self._verifying_name = model_name
+
+        # Гасим таблицу и органы управления
+        self._tree.setEnabled(False)
+        self._hash_btn.setEnabled(False)
+        self._refresh_btn.setEnabled(False)
+        self._type_filter_combo.setEnabled(False)
+        self._compat_filter_combo.setEnabled(False)
+        self._block_all_buttons()
+
+        self._progress_bar.setVisible(True)
+        self._progress_bar.setValue(0)
+        self._status_label.setText(f"Хэш-проверка {model_name}...")
+
+        self._current_verifier = DeepValidationWorker(
+            section, target, self.config, parent=self)
+        self._current_verifier.progress_updated.connect(self._on_verify_progress)
+        self._current_verifier.verification_finished.connect(self._on_verify_finished)
+        self._current_verifier.start()
+
+    def _on_verify_progress(self, current: int, total: int, message: str):
+        if total > 0:
+            self._progress_bar.setValue(int(current * 100 / total))
+        self._status_label.setText(
+            f"Хэш-проверка {self._verifying_name}: {message}")
+
+    def _on_verify_finished(self, valid: bool, errors: list, warnings: list,
+                            cancelled: bool):
+        self._is_verifying = False
+        self._current_verifier = None
+        model_id = self._verifying_model_id
+        self._verifying_model_id = None
+
+        # Восстанавливаем таблицу и органы управления
+        self._tree.setEnabled(True)
+        self._refresh_btn.setEnabled(True)
+        self._type_filter_combo.setEnabled(True)
+        self._compat_filter_combo.setEnabled(True)
+
+        if cancelled:
+            self._status_label.setText("Проверка отменена")
+            QTimer.singleShot(3000, lambda: self._progress_bar.setVisible(False))
+        else:
+            # Записываем результат в реестр (глубокая авторитетнее быстрой)
+            update_model_validation(self.config, model_id, "deep", valid, errors)
+            self._progress_bar.setValue(100)
+            if valid:
+                self._status_label.setText(f"✓ {self._verifying_name}: хэши совпадают")
+            else:
+                self._status_label.setText(f"✗ {self._verifying_name}: модель повреждена")
+            QTimer.singleShot(8000, lambda: self._progress_bar.setVisible(False))
+
+        # Обновляем таблицу и панель (выделение восстановится)
+        self._refresh_tabs()
+
+    def _deep_check_by_model_id(self, model_id: str):
+        """Глубокая проверка модели по model_id (после установки с копированием)."""
+        reg = next((m for m in self._registry_models if m["model_id"] == model_id), None)
+        if not reg:
+            self._progress_bar.setVisible(False)
+            return
+        section = reg["type"]
+        if section == "ollama":
+            target = reg["source"].get("ref", "")
+        else:
+            target = reg["paths"].get("installed", "")
+            if not target or not os.path.exists(target):
+                self._progress_bar.setVisible(False)
+                return
+        self._start_deep_validation(section, model_id, target, reg.get("display_name", ""))
+
+    def _block_all_buttons(self):
+        for btns in self._row_buttons.values():
+            btns["state_btn"].setEnabled(False)
+
+    # === Установка с диска ===
+
+    def _install_model(self, model_row: dict):
+        if self._is_downloading or self._is_verifying or self._is_installing:
+            return
+        if self._is_resource_busy():
+            self._show_busy_warning()
+            return
+
+        section = model_row["type"]
+        model_id = model_row.get("model_id")
+        if not model_id:
+            self._make_msg_box(QMessageBox.Icon.Warning, "Установка",
+                               "Модель не зарегистрирована в реестре.").exec()
+            return
+
+        if section == "ollama":
+            gguf_path = model_row.get("path", "")
+            if not gguf_path or not os.path.isfile(gguf_path):
+                self._make_msg_box(QMessageBox.Icon.Warning, "Установка",
+                                   "GGUF-файл не найден.").exec()
+                return
+            name = derive_ollama_name_from_gguf(gguf_path)
+            box = self._make_msg_box(
+                QMessageBox.Icon.Question, "Установка в Ollama",
+                f"Создать модель в Ollama как:\n\n<b>{name}:latest</b>\n\n"
+                f"из файла:\n{gguf_path}\n\n"
+                "Файл будет импортирован в хранилище Ollama.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if box.exec() != QMessageBox.StandardButton.Yes:
+                return
+            self._start_ollama_install(model_id, f"{name}:latest")
+        else:
+            src = model_row.get("path", "")
+            if not src or not os.path.exists(src):
+                self._make_msg_box(QMessageBox.Icon.Warning, "Установка",
+                                   "Путь к модели не найден.").exec()
+                return
+            pm = PathsManager()
+            models_dir = pm.get_path(self.config, "sdxl_models")
+            box = self._make_msg_box(
+                QMessageBox.Icon.Question, "Установка модели",
+                f"Переместить модель в папку моделей:\n\n"
+                f"Откуда: {src}\n"
+                f"Куда: {models_dir}\n\n"
+                "После перемещения модель пройдёт полную проверку хэшей.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if box.exec() != QMessageBox.StandardButton.Yes:
+                return
+            self._start_diffusers_install(model_id)
+
+    def _start_diffusers_install(self, model_id: str):
+        self._is_installing = True
+        self._installing_model_id = model_id
+        self._progress_bar.setVisible(True)
+        self._progress_bar.setValue(0)
+        self._status_label.setText("Установка модели (перемещение)...")
+        self._block_all_buttons()
+        self._current_installer = DiffusersInstallWorker(self.config, model_id, parent=self)
+        self._current_installer.progress_updated.connect(self._on_install_progress)
+        self._current_installer.install_finished.connect(self._on_install_finished)
+        self._current_installer.start()
+
+    def _start_ollama_install(self, model_id: str, model_name: str):
+        self._is_installing = True
+        self._installing_model_id = model_id
+        self._progress_bar.setVisible(True)
+        self._progress_bar.setValue(0)
+        self._status_label.setText(f"Создание модели {model_name} в Ollama...")
+        self._block_all_buttons()
+        self._current_installer = OllamaInstallWorker(
+            self.config, model_id, model_name, parent=self)
+        self._current_installer.progress_updated.connect(self._on_install_progress)
+        self._current_installer.install_finished.connect(self._on_install_finished)
+        self._current_installer.start()
+
+    def _on_install_progress(self, percent: int, message: str):
+        self._progress_bar.setValue(percent)
+        self._status_label.setText(message)
+
+    def _on_install_finished(self, success: bool, message: str, needs_deep_check: bool):
+        self._is_installing = False
+        self._current_installer = None
+        model_id = self._installing_model_id
+        self._installing_model_id = None
+
+        self._refresh_tabs()
+
+        if success:
+            self._status_label.setText(f"✓ {message}")
+            if needs_deep_check:
+                # После копирования (разные ФС) — полная проверка хэшей
+                self._deep_check_by_model_id(model_id)
+            else:
+                QTimer.singleShot(3000, lambda: self._progress_bar.setVisible(False))
+        else:
+            self._progress_bar.setVisible(False)
+            self._make_msg_box(QMessageBox.Icon.Critical, "Ошибка установки", message).exec()
+
+    # === Удаление ===
+
+    def _delete_model(self, model_row: dict):
+        if self._is_resource_busy():
+            self._show_busy_warning()
+            return
+
+        section = model_row["type"]
+        name = model_row["name"]
+        source = model_row.get("source", "")
         what = ("Файлы модели будут удалены с диска." if section == "diffusers"
                 else "Модель будет удалена из Ollama.")
 
@@ -489,80 +1435,24 @@ class ModelManagerDialog(QDialog):
                                f"Не удалось удалить:\n{result['message']}").exec()
             return
 
+        self._selected_model_id = None
         self._refresh_tabs()
 
-    # === Проверка валидности ===
-
-    def _validate_model(self, section: str, model_info: dict):
-        if self._is_resource_busy():
-            self._show_busy_warning()
-            return
-
-        name = model_info["name"]
-        source = model_info.get("source", "")
-
-        self._status_label.setText(f"Проверка {name}...")
-        result = validate_installed_model(source, section, self.config)
-
-        if not result["success"]:
-            icon = QMessageBox.Icon.Warning
-            title = "Проверка не удалась"
-            msg = f"Модель: {name}\n\nОшибки:\n" + "\n".join(result["errors"])
-        elif result["valid"]:
-            icon = QMessageBox.Icon.Information
-            title = "Проверка целостности"
-            msg = f"✅ Модель {name} цела и валидна"
-            if result["warnings"]:
-                msg += "\n\nПредупреждения:\n" + "\n".join(result["warnings"])
-        else:
-            icon = QMessageBox.Icon.Critical
-            title = "Модель повреждена"
-            msg = f"Модель: {name}\n\nОшибки:\n" + "\n".join(result["errors"])
-
-        self._make_msg_box(icon, title, msg).exec()
-        self._status_label.setText("Готово к работе")
-
-    # === Вердикт для неустановленной модели ===
-
-    def _show_verdict(self, section: str, model_info: dict):
-        verdict = self._verdict_level(model_info)
-        name = model_info["name"]
-        min_ram = model_info.get("min_ram_gb", 0)
-        total = self._total_ram_gb
-
-        if verdict == "ok":
-            icon = QMessageBox.Icon.Information
-            title = "Вердикт: потянет"
-            msg = (f"✅ Модель {name} должна запуститься.\n\n"
-                   f"Мин. ОЗУ: {min_ram} ГБ\nУ вас установлено: {total:.1f} ГБ")
-        elif verdict == "warn":
-            icon = QMessageBox.Icon.Warning
-            title = "Вердикт: впритык"
-            msg = (f"⚠ Модель {name} запустится впритык.\n\n"
-                   f"Мин. ОЗУ: {min_ram} ГБ\nУ вас установлено: {total:.1f} ГБ.\n"
-                   f"Совет: закройте другие приложения перед запуском.")
-        else:
-            icon = QMessageBox.Icon.Critical
-            title = "Вердикт: не потянет"
-            msg = (f"❌ Модель {name} не запустится.\n\n"
-                   f"Мин. ОЗУ: {min_ram} ГБ\nУ вас установлено: {total:.1f} ГБ.")
-
-        self._make_msg_box(icon, title, msg).exec()
-
-    # === Утилиты ===
+    # === Обновление ===
 
     def _refresh_tabs(self):
-        """Перечитывает установленные модели и перестраивает вкладки."""
-        self._installed_ollama = list_installed_ollama_models(self.config)
-        self._installed_diffusers_registry = load_registry(self.config)
-        current_index = self._tabs.currentIndex()
-        self._tabs.clear()
-        self._populate_tabs()
-        if 0 <= current_index < self._tabs.count():
-            self._tabs.setCurrentIndex(current_index)
+        self._load_data()
+        self._populate_table()
 
     def closeEvent(self, event):
-        """Отменяет загрузку при закрытии диалога."""
+        if self._is_installing:
+            # Перемещение файлов нельзя прерывать без риска оставить огрызок
+            self._status_label.setText("Идёт установка модели — дождитесь завершения")
+            event.ignore()
+            return
         if self._is_downloading and self._current_downloader:
             self._current_downloader.cancel()
+        if self._is_verifying and self._current_verifier:
+            self._current_verifier.cancel()
+            self._current_verifier.wait(5000)
         event.accept()

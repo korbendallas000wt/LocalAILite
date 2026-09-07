@@ -18,8 +18,8 @@
     │   └── PHILOSOPHY.md                    # Философия проекта
     ├── WORK/                                # Локальные файлы разработки (в .gitignore, не пушатся)
     │   ├── HANDOFF.md                       # Передача сессии: поток Кодера
-│   ├── BRIEF.md                         # Передача сессии: поток Эксперта
-│   └── RELAYRACE.md                     # Передача сессии: поток Доксрайтера
+    │   ├── BRIEF.md                         # Передача сессии: поток Эксперта
+    │   └── RELAYRACE.md                     # Передача сессии: поток Доксрайтера
     │
     ├── core/                                # Ядро (логика без UI)
     │   ├── chat_manager.py                  # История чата (messages list)
@@ -33,13 +33,16 @@
     │   ├── history_manager.py               # Менеджер истории: data/diffusers/history/{timestamp}/
     │   ├── image_processor.py               # Обработка изображений: resize, crop, letterbox, stretch
     │   ├── markdown_parser.py               # Markdown в HTML (подсветка кода, ссылки, списки, рендер карточек вложений)
-    │   ├── models_registry.py               # Реестр моделей v2.0: короткое имя ↔ {path, full_name, type}
+    │   ├── models_registry.py               # Реестр моделей v3.0: статусы вычисляются сверкой с диском (reconcile), 5 статусов
     │   ├── ollama_client.py                 # QThread-клиент к Ollama API (/api/chat)
     │   ├── ollama_manager.py                # Управление ollama serve (старт/стоп/конфликты портов)
     │   ├── ollama_model_info.py          # Кэш лимитов контекста моделей Ollama (TTL 5 мин, /api/show)
     │   ├── context_tracker.py             # Трекер контекста (подсчёт токенов, прогресс в статусбар)
     │   ├── file_reader.py                # Чтение и валидация файлов для вложений
     │   ├── model_downloader.py         # Общий контракт скачивания + OllamaDownloader + DiffusersDownloader
+    │   ├── model_verifier.py            # Асинхронная хэш-проверка моделей в фоне (DeepValidationWorker)
+    │   ├── model_installer.py           # Установка моделей: перемещение в папку моделей + создание из GGUF
+    │   ├── hf_search.py                 # Поиск моделей на HuggingFace через публичный API (QThread)
     │   ├── resource_manager.py              # Управление ресурсом: acquire/release, 2 арендатора
     │   ├── resource_monitor.py              # Мониторинг RAM/CPU, реальная проверка RAM, лимиты, PID
     │   └── updater.py                     # Модуль обновлений v2.1: проверка версий (асинхронно, QNetworkAccessManager) + скачивание/установка (QThread)
@@ -49,7 +52,9 @@
     │   ├── compare_images.py                # Попиксельное сравнение изображений (numpy)
     │   ├── encode_image.py                  # Кодирование изображения в latents через VAE (для img2img)
     │   ├── test_vae_roundtrip.py            # Тест VAE encode/decode roundtrip
-    │   └── test_downloader.py               # Тестовый скрипт для отладки DiffusersDownloader (живой прогрессбар)
+    │   ├── test_downloader.py               # Тестовый скрипт для отладки DiffusersDownloader (живой прогрессбар)
+    │   ├── ollama_library.json              # Справочник библиотеки Ollama (239 моделей с описаниями)
+    │   └── scrape_ollama_library.py         # Парсер для обновления кэша справочника Ollama
     │
     ├── ui/                                  # PyQt6 интерфейс
     │   ├── main_window.py                   # Главное окно: 3 вкладки, меню, OllamaManager, SharedBottomBar
@@ -62,7 +67,7 @@
     │   │   ├── paths_dialog.py              # Стартовый диалог настройки путей
     │   │   ├── history_save_dialog.py       # Диалог сохранения истории генерации
     │   │   ├── folder_dialog.py             # Обёртка над QFileDialog с режимами (navigate/select)
-    │   │   ├── model_manager_dialog.py      # Менеджер моделей: список, вердикты по железу, скачивание
+    │   │   ├── model_manager_dialog.py      # Менеджер моделей v4: 4 вкладки (Реестр/Добавить/Поиск/Ссылки), чек-лист, колонка «Система»
     │   │   └── settings/
     │   │       ├── settings_dialog.py       # Окно настроек (вкладки)
     │   │       ├── paths_settings_widget.py         # Вкладка Общие
@@ -135,7 +140,7 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/chat_manager.py
 - **chat_versions.py** — нумерованные чаты (папки, варианты, навигация)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/chat_versions.py
-- **model_validator.py** — проверка целостности моделей (HF cache, single-file, Ollama)
+- **model_validator.py** — проверка целостности моделей: быстрая (структура + размеры) + глубокая (хэши), CheckItem для чек-листа
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/model_validator.py
 - **package_validator.py** — проверка пакетов venv (баг #15: numpy race condition)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/package_validator.py
@@ -153,7 +158,7 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/image_processor.py
 - **markdown_parser.py** — Markdown в HTML (подсветка кода, ссылки, списки, рендер карточек вложений)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/markdown_parser.py
-- **models_registry.py** — реестр моделей v2.0
+- **models_registry.py** — реестр моделей v3.0: статусы вычисляются сверкой с диском (reconcile), 5 статусов
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/models_registry.py
 - **ollama_client.py** — QThread-клиент к Ollama API (/api/chat)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/ollama_client.py
@@ -175,6 +180,12 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/resource_monitor.py
 - **updater.py** — модуль обновлений v2.1: проверка версий (асинхронно, QNetworkAccessManager) + скачивание/установка (QThread)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/updater.py
+- **model_verifier.py** — асинхронная хэш-проверка моделей в фоне (DeepValidationWorker)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/model_verifier.py
+- **model_installer.py** — установка моделей: перемещение в папку моделей + создание из GGUF
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/model_installer.py
+- **hf_search.py** — поиск моделей на HuggingFace через публичный API (QThread)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/hf_search.py
 
 
 ### installer/ — инсталлятор
@@ -220,6 +231,10 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/scripts/test_vae_roundtrip.py
 - **test_downloader.py** — тестовый скрипт для отладки DiffusersDownloader (живой прогрессбар)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/scripts/test_downloader.py
+- **ollama_library.json** — справочник библиотеки Ollama (239 моделей с описаниями)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/scripts/ollama_library.json
+- **scrape_ollama_library.py** — парсер для обновления кэша справочника Ollama
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/scripts/scrape_ollama_library.py
 
 ### ui/ — PyQt6 интерфейс
 
