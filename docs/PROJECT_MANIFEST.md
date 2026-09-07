@@ -26,7 +26,7 @@
 | ui/tabs/image_prep_panel.py | v1.1.0 | Правая панель Visual editor. Пресет разрешения, режим обрезки (center/letterbox/stretch). |
 | ui/dialogs/paths_dialog.py | v1.0.0 | Стартовый диалог. Настройка путей (venv, модели, output, Ollama URL) с валидацией. |
 | ui/dialogs/history_save_dialog.py | v1.2.0 | Диалог сохранения истории генерации (чекбокс создания превью, таймер авто-сохранения). |
-| ui/dialogs/model_manager_dialog.py | v2.0.0 | Менеджер моделей: список доступных/установленных, фильтр по железу, трёхуровневые вердикты по RAM (✅/⚠/❌), скачивание с прогрессом, удаление, проверка целостности, блокировка при активной генерации. Одна загрузка за раз. |
+| ui/dialogs/model_manager_dialog.py | v4.0.0 | Менеджер моделей: 4 вкладки (Реестр/Добавить/Поиск/Ссылки), 5 статусов с цветной индикацией, колонка «Система» (цветной вердикт), чек-лист быстрой проверки, хэш-проверка в фоне, поиск на HuggingFace. Одна загрузка за раз. |
 | ui/dialogs/settings/settings_dialog.py | v1.0.0 | Окно настроек. Вкладки (Общие, Diffusers, Ресурсы). |
 | ui/dialogs/settings/paths_settings_widget.py | v1.0.0 | Вкладка Общие. Настройки путей с валидацией в реальном времени. |
 | ui/dialogs/settings/chat_settings_widget.py | v1.0.0 | Вкладка Чат. Формат сохранения (JSON/TXT), папка чатов (через FolderDialog mode=select), автозаголовок через LLM. |
@@ -45,13 +45,17 @@
 | core/file_reader.py | v1.0.0 | Чтение и валидация файлов для вложений (размер, тип, кодировка). |
 | core/model_downloader.py | v1.0.0 | Общий контракт скачивания (прогресс, отмена, верификация) + OllamaDownloader (QProcess, ollama pull) + DiffusersDownloader (huggingface_hub/requests). |
 | core/model_lifecycle.py | v1.0.0 | Управление жизненным циклом моделей: удаление (ollama rm, rmtree папки hf_cache), проверка целостности через model_validator.py, интеграция с resource_manager (блокировка при генерации). |
+| core/model_validator.py | v3.0.0 | Двухуровневая валидация: быстрая (структура + отсутствие .incomplete + размеры > 0, CheckItem для чек-листа) + глубокая (хэши: SHA256 для Diffusers, digest для Ollama). |
+| core/model_verifier.py | v1.0.0 | Асинхронная хэш-проверка моделей в фоне (DeepValidationWorker, QThread) с прогрессом и отменой. Используется Менеджером моделей для кнопки «Хэш-проверка». |
+| core/model_installer.py | v1.0.0 | Установка моделей: DiffusersInstallWorker (перемещение в папку моделей — атомарный rename или копирование с прогрессом) + OllamaInstallWorker (создание модели из GGUF через \'ollama create\'). |
+| core/hf_search.py | v1.0.0 | Поиск моделей на HuggingFace через публичный API (HFSearchWorker, QThread). Детекция базы (SDXL/Flux/SD3/SD1.5), категории (checkpoint/lora/vae), формата (hf_cache/file). |
 | core/ollama_manager.py | v1.2.0 | Управление процессом ollama serve (старт/стоп), проверка порта 11434, обработка конфликтов, логирование, PID-файлы, проверка RAM, CPU affinity, nice-приоритет. |
 | core/diffusers_worker.py | v1.2.0 | QProcess-обёртка для scripts/generate_diffusers.py, парсинг JSON-вывода, логирование, сигналы (step_updated, generation_finished, error_occurred). Проверка RAM, CPU limits, history_dir. Адаптация под diffusers 0.39+ (callback_on_step_end). |
 | core/checkpoint_manager.py | v1.0.0 | Менеджер чекпоинтов генерации. Сохранение latents + scheduler + generator в PT, метаданные в JSON, архивация с timestamp, загрузка из архива. |
 | core/history_manager.py | v1.1.0 | Менеджер истории генерации. Создаёт папки data/history/{timestamp}/, сохраняет metadata.json, копирует PNG на каждом шаге, список историй, удаление. |
 | core/resource_manager.py | v1.2.0 | Управление ресурсом (GPU/RAM): acquire/release, 2 арендатора (Ollama, Diffusers). Переключение табов + выгрузка неактивных модулей. |
 | core/resource_monitor.py | v1.2.1 | Мониторинг RAM/CPU через psutil, реальная проверка RAM (psutil.virtual_memory), оценка потребления SDXL 9-11 GB, применение лимитов (cpu_affinity, priority, env-переменные), управление процессами по PID (read_pid_file, is_process_alive, kill_process_by_pid). |
-| core/models_registry.py | v1.5.0 | Реестр моделей v2.0: короткое имя ↔ {path, full_name, type}. KNOWN_MODELS, типы (hf_cache/file/folder), поле packaging, beautify_name. Методы: list_available_models (дефолт в коде + override available_models.json), list_installed_ollama_models (сканирование manifests/ без сервера). |
+| core/models_registry.py | v3.0.0 | Реестр моделей v3.0: статусы вычисляются сверкой с диском (reconcile), 5 статусов (Скачать/Закачана/Валидна/Установлена/Невалидна), автозаполнение метаданных (размер, оценка ОЗУ, описание из справочника библиотеки Ollama). Методы: reconcile_registry, list_all_models, get_model_status, register_from_path, remove_model_from_registry. |
 | core/image_processor.py | v1.1.0 | Обработка изображений: resize, crop (center/letterbox/stretch), нормализация до кратности 8. |
 | core/path_validator.py | v1.1.0 | Валидация путей (venv, модели, output, Ollama URL, бинарник Ollama, модели Ollama), проверка доступности, подсчёт моделей. |
 | core/paths_manager.py | v1.4.0 | Единый модуль управления путями: ключи QSettings, дефолты, размеры, labels, критичность, get_raw_paths/get_effective_paths/set_path, валидация с уровнями (0/1/2), источники моделей из data/model_sources.json. |
@@ -67,6 +71,8 @@
 | scripts/encode_image.py | v1.1.0 | Кодирование изображения в latents через VAE (для img2img подготовки). |
 | scripts/test_vae_roundtrip.py | v1.1.0 | Тест VAE encode/decode roundtrip. |
 | scripts/test_downloader.py | v1.0.0 | Тестовый скрипт для отладки DiffusersDownloader (живой прогрессбар). |
+| scripts/ollama_library.json | v1.0.0 | Справочник библиотеки Ollama (239 моделей с описаниями с сайта Ollama). Используется для автозаполнения описаний в реестре. |
+| scripts/scrape_ollama_library.py | v1.0.0 | Парсер для обновления кэша справочника библиотеки Ollama (скрейпинг сайта Ollama). |
 
 ### Утилиты (utils/)
 
