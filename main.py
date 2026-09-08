@@ -1,4 +1,5 @@
 import sys
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QStyleFactory, QMessageBox
 from ui.main_window import MainWindow
 from ui.dialogs.settings.settings_dialog import SettingsDialog
@@ -14,6 +15,25 @@ if __name__ == "__main__":
         if style_name in QStyleFactory.keys():
             app.setStyle(QStyleFactory.create(style_name))
             break
+    
+    # Глобальная страховка: все диалоги приложения ненативные
+    # (совместимость с Qt < 6.5 + страховка от KDE-сегфолтов)
+    app.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
+    
+    # Фикс роли PlaceholderText для тёмных тем (баг на Убунту):
+    # системная палитра отдаёт чёрный PlaceholderText при светлом Text —
+    # плейсхолдеры полей и приглушённый текст (статистика, кнопки «копия»)
+    # становятся нечитаемыми на тёмном фоне. Пересчитываем из цвета Text
+    # с прозрачностью ~55%: читаемо и приглушённо, в любой теме.
+    from PyQt6.QtGui import QColor, QPalette
+    _pal = app.palette()
+    _text_color = QColor(_pal.color(QPalette.ColorRole.Text))
+    _text_color.setAlpha(140)
+    for _group in (QPalette.ColorGroup.Active,
+                   QPalette.ColorGroup.Inactive,
+                   QPalette.ColorGroup.Disabled):
+        _pal.setColor(_group, QPalette.ColorRole.PlaceholderText, _text_color)
+    app.setPalette(_pal)
     
     # Создаём конфиг
     config = Config()

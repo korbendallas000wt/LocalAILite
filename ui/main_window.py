@@ -104,7 +104,7 @@ class MainWindow(QMainWindow):
         if first_tab and hasattr(first_tab, '_bar_state'):
             state = first_tab._bar_state
             self.shared_bar.set_prompt(state["prompt"])
-            self.shared_bar.set_progress(state["progress_current"], state["progress_total"])
+            self.shared_bar.set_progress(state["progress_current"], state["progress_total"], state.get("progress_colorize", False))
             self.shared_bar.set_status(state["status"], state.get("status_color"))
             if "elapsed_seconds" in state:
                 self.shared_bar.set_timer_display(state["elapsed_seconds"])
@@ -327,7 +327,7 @@ class MainWindow(QMainWindow):
         if hasattr(active_tab, '_bar_state'):
             state = active_tab._bar_state
             self.shared_bar.set_prompt(state["prompt"])
-            self.shared_bar.set_progress(state["progress_current"], state["progress_total"])
+            self.shared_bar.set_progress(state["progress_current"], state["progress_total"], state.get("progress_colorize", False))
         if "elapsed_seconds" in state:
             self.shared_bar.set_timer_display(state["elapsed_seconds"])
             self.shared_bar.set_status(state["status"], state.get("status_color"))
@@ -425,27 +425,21 @@ class MainWindow(QMainWindow):
             active_tab.stop_generation()
     
     def _restore_bar_state(self):
-        """Восстановление состояния табов из QSettings"""
+        """Заглушка: состояние табов НЕ восстанавливается из QSettings.
+        Старт всегда с чистого листа (фикс: прогрессбар не показывает
+        прогресс прошлого чата при запуске). In-memory _bar_state табов
+        работает при переключении вкладок.
+        """
         for i in range(self.tabs.count()):
             tab = self.tabs.widget(i)
             if hasattr(tab, '_bar_state'):
-                tab_name = self._tab_names.get(id(tab), f"tab_{i}")
-                saved_state = self.config.get_json(f"bar_state/{tab_name}")
-                if saved_state:
-                    for key in tab._bar_state.keys():
-                        if key in saved_state:
-                            tab._bar_state[key] = saved_state[key]
-                
-                # Сбрасываем is_running при старте
                 tab._bar_state["is_running"] = False
     
     def _save_bar_state(self):
-        """Сохранение состояния табов в QSettings"""
-        for i in range(self.tabs.count()):
-            tab = self.tabs.widget(i)
-            if hasattr(tab, '_bar_state'):
-                tab_name = self._tab_names.get(id(tab), f"tab_{i}")
-                self.config.set_json(f"bar_state/{tab_name}", tab._bar_state)
+        """Заглушка: состояние табов НЕ сохраняется в QSettings.
+        Персистентное сохранение убрано (старт с чистого листа).
+        """
+        pass
     
     # === Ollama Manager handlers ===
     

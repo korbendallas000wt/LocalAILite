@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
                               QProgressBar, QCheckBox, QComboBox, QHeaderView,
                               QMessageBox, QWidget, QAbstractItemView, QGroupBox,
                               QLineEdit, QFileDialog, QListWidget, QListWidgetItem)
-from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtCore import Qt, QTimer, QUrl, QSize
 from PyQt6.QtGui import QColor, QBrush, QPalette, QFont, QDesktopServices
 from utils.config import Config
 from core.models_registry import (list_installed_ollama_models,
@@ -90,7 +90,6 @@ COLUMN_PERCENTS = [0.26, 0.09, 0.09, 0.10, 0.13, 0.12]
 TREE_STYLE = (
     "QTreeWidget::item {"
     "  border-bottom: 1px solid rgba(128, 128, 128, 60);"
-    "  padding: 3px 2px;"
     "}"
 )
 
@@ -470,6 +469,7 @@ class ModelManagerDialog(QDialog):
                         item.setForeground(col, QBrush(dim))
 
             self._tree.addTopLevelItem(item)
+            item.setSizeHint(5, QSize(BTN_WIDTH, BTN_HEIGHT + 8))  # высота для кнопок
             self._create_action_button(item, model_row)
 
         self._tree.setSortingEnabled(True)
@@ -1080,7 +1080,6 @@ class ModelManagerDialog(QDialog):
     def _make_msg_box(self, icon, title, text,
                       buttons=QMessageBox.StandardButton.Ok) -> QMessageBox:
         box = QMessageBox(self)
-        box.setOption(QMessageBox.Option.DontUseNativeDialog)
         box.setIcon(icon)
         box.setWindowTitle(title)
         box.setText(text)
