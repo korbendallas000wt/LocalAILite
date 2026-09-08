@@ -37,7 +37,6 @@ class FolderDialog:
         dialog.setWindowTitle(title)
         dialog.setFileMode(QFileDialog.FileMode.Directory)
         dialog.setDirectory(str(start_dir))
-        dialog.setOption(QFileDialog.Option.DontUseNativeDialog)
         dialog.setOption(QFileDialog.Option.ShowDirsOnly)
 
         # Путь, выбранный через сигнал (для режима "select")
