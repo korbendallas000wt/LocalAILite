@@ -17,7 +17,7 @@
 | ui/tabs/ollama_tab.py | v1.2.0 | Чат. ChatWidget + SettingsPanel + OllamaClient (QThread), управление историей через ChatManager, acquire/release ресурса. |
 | ui/tabs/diffusers_tab.py | v1.2.1 | Генерация. QGraphicsView для превью, DiffusersSettingsPanel, DiffusersWorker (QProcess), управление чекпоинтами и историей. Исправлена утечка ресурса и гонка при остановке. |
 | ui/tabs/image_prep_tab.py | v1.1.0 | Visual editor. QGraphicsView + галерея + обработка изображений (resize/crop). |
-| ui/shared_bottom_bar.py | v1.5.0 | Общая панель. Поле ввода промпта, прогрессбар токенов с фоновой подкраской через QPalette.ColorRole.Window (норма ≤70% — нативный; внимание 70-90% — оранжевый #f0ad4e; критично ≥90% — красный #d9534f; только в Ollama-вкладке), таймер, индикаторы RAM/CPU, индикатор ресурса с именем модели (㊘ Генерация Ollama · qwen2.5:3b), единая кнопка действия (3 состояния). |
+| ui/shared_bottom_bar.py | v1.5.1 | Общая панель. Поле ввода промпта, прогрессбар токенов с подкраской чанка через QPalette.ColorRole.Highlight (кросс-платформенно: на Fusion красится, на Breeze игнорируется; норма ≤70% — нативный; внимание 70-90% — оранжевый #f0ad4e; критично ≥90% — красный #d9534f; только в Ollama-вкладке), таймер, индикаторы RAM/CPU, индикатор ресурса с именем модели (㊘ Генерация Ollama · qwen2.5:3b), единая кнопка действия (3 состояния). |
 | ui/cleanup_dialog.py | v1.2.1 | Очистка. Диалог освобождения ресурсов при закрытии (5 шагов): остановка Diffusers (включая kill по PID), выгрузка модели Ollama, стоп сервера, очистка памяти. |
 | ui/chat_widget.py | v1.0.0 | Чат-браузер. QTextBrowser с рендерингом Markdown, стриминг токенов, копирование кода по клику, контекстное меню, карточки вложений с сигналами open/remove. |
 | ui/chat_control_panel.py | v1.0.0 | Панель управления чатом (4 кнопки: Новый, Отменить, Файл, Сохранить). |
@@ -380,7 +380,7 @@ step_sdxl_env разбивается на подшаги:
 - ui/tabs/ollama_tab.py v1.2.0 (чат, ChatWidget + SettingsPanel + OllamaClient)
 - ui/tabs/diffusers_tab.py v1.2.1 (генерация, QGraphicsView + DiffusersWorker)
 - ui/tabs/image_prep_tab.py v1.1.0 (Visual editor, превью + галерея + обработка)
-- ui/shared_bottom_bar.py v1.2.0 (общая панель, промпт, прогресс, таймер, RAM/CPU, индикатор ресурса, единая кнопка)
+- ui/shared_bottom_bar.py v1.5.1 (общая панель, промпт, прогресс, таймер, RAM/CPU, индикатор ресурса, единая кнопка)
 - ui/cleanup_dialog.py v1.2.1 (очистка ресурсов, 5 шагов, kill по PID)
 - core/ollama_client.py v1.0.0 (QThread-клиент к Ollama API)
 - core/ollama_manager.py v1.2.0 (управление ollama serve, RAM/CPU limits)
