@@ -5,7 +5,8 @@
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel,
     QPushButton, QFileDialog, QGraphicsView,
-    QGraphicsScene, QGraphicsPixmapItem, QMessageBox, QStyle
+    QGraphicsScene, QGraphicsPixmapItem, QMessageBox, QStyle,
+    QGroupBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage
@@ -89,8 +90,9 @@ class ImagePrepTab(QWidget):
 
         layout = QHBoxLayout(self)
 
-        # === Левая часть: превью изображения + навигатор ===
-        left_layout = QVBoxLayout()
+        # === Левый QGroupBox: превью изображения + навигатор ===
+        self.left_group = QGroupBox()
+        left_layout = QVBoxLayout(self.left_group)
         self.image_view = QGraphicsView()
         self.scene = QGraphicsScene()
         self.image_view.setScene(self.scene)
@@ -100,11 +102,14 @@ class ImagePrepTab(QWidget):
         self.gallery_navigator = GalleryNavigator()
         left_layout.addWidget(self.gallery_navigator)
 
-        layout.addLayout(left_layout, 3)
-
-        # === Правая часть: настройки ===
+        # === Правый QGroupBox: настройки ===
+        self.right_group = QGroupBox()
+        right_layout = QVBoxLayout(self.right_group)
         self.settings_panel = ImagePrepPanel()
-        layout.addWidget(self.settings_panel, 1)
+        right_layout.addWidget(self.settings_panel)
+
+        layout.addWidget(self.left_group, 1)
+        layout.addWidget(self.right_group)
 
         # === Подключение сигналов панели ===
         self.settings_panel.open_btn.clicked.connect(self._on_open_clicked)
@@ -113,6 +118,10 @@ class ImagePrepTab(QWidget):
 
         # Восстанавливаем настройки из конфига
         self._restore_settings()
+
+    def set_right_width(self, width: int):
+        """Устанавливает ширину правой панели (вызывается из MainWindow)."""
+        self.right_group.setFixedWidth(width)
 
     def _restore_settings(self):
         """Восстанавливает последние настройки из конфига"""

@@ -273,7 +273,7 @@
 
 **Версии модулей**: `main_window.py` v1.3.0 → v1.4.0, `shared_bottom_bar.py` v1.5.1 → v1.6.0, `ollama_tab.py` v1.2.0 → v1.3.0, `diffusers_tab.py` v1.2.1 → v1.3.0, `image_prep_tab.py` v1.1.0 → v1.2.0.
 
-**Коммит**: (после пуша)
+**Коммит**: `b516b58`
 
 ---
 

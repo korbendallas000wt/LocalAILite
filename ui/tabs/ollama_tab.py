@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QInputDialog, QMessageBox
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QInputDialog, QMessageBox, QGroupBox
 from ui.chat_widget import ChatWidget
 from ui.chat_control_panel import ChatControlPanel
 from ui.settings_panel import SettingsPanel
@@ -66,7 +66,9 @@ class OllamaTab(QWidget):
 
         layout = QHBoxLayout(self)
 
-        left_layout = QVBoxLayout()
+        # Левый QGroupBox: чат + панель управления
+        self.left_group = QGroupBox()
+        left_layout = QVBoxLayout(self.left_group)
         self.chat_widget = ChatWidget()
         self.chat_widget.set_auto_scroll(self.config.get("chat_auto_scroll", True))
         self.chat_control_panel = ChatControlPanel()
@@ -78,8 +80,13 @@ class OllamaTab(QWidget):
         timeout_sec = self.settings_panel.timeout_spin.value()
         self._bar_state["progress_total"] = timeout_sec
 
-        layout.addLayout(left_layout, 3)
-        layout.addWidget(self.settings_panel, 1)
+        # Правый QGroupBox: настройки
+        self.right_group = QGroupBox()
+        right_layout = QVBoxLayout(self.right_group)
+        right_layout.addWidget(self.settings_panel)
+
+        layout.addWidget(self.left_group, 1)
+        layout.addWidget(self.right_group)
 
         # Подключения
         self.settings_panel.timeout_spin.valueChanged.connect(self._on_timeout_changed)
@@ -103,6 +110,10 @@ class OllamaTab(QWidget):
 
         # Первоначальный подсчёт контекста
         self._update_context_usage()
+
+    def set_right_width(self, width: int):
+        """Устанавливает ширину правой панели (вызывается из MainWindow)."""
+        self.right_group.setFixedWidth(width)
 
     def _on_timeout_changed(self, value):
         self.state_changed.emit(self._bar_state.copy())

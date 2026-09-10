@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
                               QPushButton, QFileDialog, QGraphicsView,
-                              QGraphicsScene, QGraphicsPixmapItem, QMessageBox)
+                              QGraphicsScene, QGraphicsPixmapItem, QMessageBox,
+                              QGroupBox)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QPixmap
 from ui.tabs.diffusers_settings_panel import DiffusersSettingsPanel
@@ -59,8 +60,9 @@ class DiffusersTab(QWidget):
         
         layout = QHBoxLayout(self)
         
-        # Левая часть: превью изображения
-        left_layout = QVBoxLayout()
+        # Левый QGroupBox: превью изображения + кнопка
+        self.left_group = QGroupBox()
+        left_layout = QVBoxLayout(self.left_group)
         self.image_view = QGraphicsView()
         self.scene = QGraphicsScene()
         self.image_view.setScene(self.scene)
@@ -72,11 +74,14 @@ class DiffusersTab(QWidget):
         self.open_folder_btn.clicked.connect(self._open_output_folder)
         left_layout.addWidget(self.open_folder_btn)
         
-        layout.addLayout(left_layout, 3)
-        
-        # Правая часть: настройки
+        # Правый QGroupBox: настройки
+        self.right_group = QGroupBox()
+        right_layout = QVBoxLayout(self.right_group)
         self.settings_panel = DiffusersSettingsPanel(self.config)
-        layout.addWidget(self.settings_panel, 1)
+        right_layout.addWidget(self.settings_panel)
+        
+        layout.addWidget(self.left_group, 1)
+        layout.addWidget(self.right_group)
         
         self.settings_panel.steps_spin.valueChanged.connect(self._on_steps_changed)
         self.settings_panel.checkpoint_selected.connect(self._on_checkpoint_selected)
@@ -84,6 +89,10 @@ class DiffusersTab(QWidget):
         self.settings_panel.mode_changed.connect(self._on_mode_changed)
         self._on_mode_changed("create")
                     
+    def set_right_width(self, width: int):
+        """Устанавливает ширину правой панели (вызывается из MainWindow)."""
+        self.right_group.setFixedWidth(width)
+
     def _on_steps_changed(self, value):
         self.state_changed.emit(self._bar_state.copy())
     
