@@ -893,3 +893,17 @@ def set_model_preset(config: Config, model_id: str, preset: dict) -> bool:
     registry_data["models"][model_id]["updated_at"] = _now_iso()
     _save_registry_v3(config, registry_data)
     return True
+
+
+def get_model_id_by_display_name(config: Config, display_name: str) -> str:
+    """Возвращает ключ реестра (model_id) по отображаемому имени модели.
+
+    Возвращает пустую строку, если модель не найдена.
+    Используется панелью настроек для маппинга выбора комбобокса (красивое имя)
+    на внутренний ключ реестра, который ожидает модель пресетов.
+    """
+    registry_data = _load_registry_v3(config)
+    for model_id, model in registry_data.get("models", {}).items():
+        if model.get("display_name") == display_name:
+            return model_id
+    return ""

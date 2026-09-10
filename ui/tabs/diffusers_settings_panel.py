@@ -4,6 +4,8 @@ QTextEdit, QHBoxLayout, QLabel, QRadioButton)
 from PyQt6.QtCore import Qt, pyqtSignal
 import random
 import os
+from core.model_presets import get_effective_preset
+from core.models_registry import get_model_id_by_display_name
 
 class DiffusersSettingsPanel(QWidget):
     """Панель настроек Diffusers с управлением чекпоинтами и режимами"""
@@ -30,6 +32,9 @@ class DiffusersSettingsPanel(QWidget):
         self.refresh_models_btn.clicked.connect(self._load_models)
         model_row.addWidget(self.refresh_models_btn)
         layout.addLayout(model_row)
+        
+        # Автоприменение пресета при выборе модели
+        self.model_combo.currentTextChanged.connect(self._on_model_changed)
         
         # === Scheduler ===
         layout.addWidget(QLabel("Scheduler:"))
@@ -256,6 +261,80 @@ class DiffusersSettingsPanel(QWidget):
             if current_text and current_text in display_names:
                 self.model_combo.setCurrentText(current_text)
     
+    def _on_model_changed(self, display_name: str):
+        """Применяет пресет модели при смене выбора в комбобоксе.
+        
+        Загружает эффективный пресет (сохранённый + дефолты) и устанавливает
+        значения во все поля панели. Использует blockSignals для защиты
+        от рекурсии при установке значений.
+        """
+        if not display_name:
+            return
+        
+        # Получаем ключ реестра (model_id) по отображаемому имени
+        model_id = get_model_id_by_display_name(self.config, display_name)
+        
+        if not model_id:
+            return
+        
+        # Загружаем эффективный пресет
+        preset = get_effective_preset(self.config, model_id)
+        if not preset:
+            return
+        
+        # Блокируем сигналы при установке значений (защита от рекурсии)
+        self.blockSignals(True)
+        try:
+            # Планировщик
+            scheduler = preset.get("scheduler", "")
+            if scheduler:
+                idx = self.scheduler_combo.findText(scheduler)
+                if idx >= 0:
+                    self.scheduler_combo.setCurrentIndex(idx)
+            
+            # Timestep Spacing
+            timestep_spacing = preset.get("timestep_spacing", "")
+            if timestep_spacing:
+                idx = self.timestep_spacing_combo.findText(timestep_spacing)
+                if idx >= 0:
+                    self.timestep_spacing_combo.setCurrentIndex(idx)
+            
+            # Шаги
+            steps = preset.get("steps")
+            if steps is not None:
+                self.steps_spin.setValue(steps)
+            
+            # CFG
+            cfg = preset.get("cfg")
+            if cfg is not None:
+                self.cfg_spin.setValue(cfg)
+            
+            # Размер
+            width = preset.get("width")
+            height = preset.get("height")
+            if width and height:
+                size_text = f"{width}×{height}"
+                idx = self.size_combo.findText(size_text)
+                if idx >= 0:
+                    self.size_combo.setCurrentIndex(idx)
+            
+            # Сид
+            seed = preset.get("seed")
+            if seed is not None:
+                self.seed_edit.setText(str(seed))
+            
+            # Негативный промпт
+            negative_prompt = preset.get("negative_prompt")
+            if negative_prompt is not None:
+                self.negative_prompt.setPlainText(negative_prompt)
+            
+            # Strength
+            strength = preset.get("strength")
+            if strength is not None:
+                self.strength_spin.setValue(strength)
+        finally:
+            self.blockSignals(False)
+
     def _random_seed(self):
         self.seed_edit.setText(str(random.randint(0, 2**32 - 1)))
     
