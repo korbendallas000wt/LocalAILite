@@ -99,6 +99,7 @@ class DiffusersWorker(QObject):
             "--negative", negative_prompt,
             "--model", model_path,
             "--scheduler", params["scheduler"],
+            "--timestep_spacing", params.get("timestep_spacing", "leading"),
             "--steps", str(params["steps"]),
             "--cfg", str(params["cfg"]),
             "--width", str(params["width"]),

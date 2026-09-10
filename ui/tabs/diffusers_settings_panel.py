@@ -44,6 +44,16 @@ class DiffusersSettingsPanel(QWidget):
         self.scheduler_combo.setCurrentText(self.config.get_sdxl_scheduler())
         layout.addWidget(self.scheduler_combo)
         
+        # === Timestep Spacing (распределение шагов по шкале времени) ===
+        layout.addWidget(QLabel("Timestep Spacing:"))
+        self.timestep_spacing_combo = QComboBox()
+        self.timestep_spacing_combo.addItems(["leading", "linspace", "trailing"])
+        self.timestep_spacing_combo.setCurrentText(self.config.get("sdxl/timestep_spacing", "leading"))
+        self.timestep_spacing_combo.setToolTip("Как шаги распределяются по шкале времени:\nleading (по умолчанию) / linspace (равномерно) / trailing (с конца)")
+        self.timestep_spacing_combo.currentTextChanged.connect(
+            lambda text: self.config.set("sdxl/timestep_spacing", text))
+        layout.addWidget(self.timestep_spacing_combo)
+        
         # === Size + Seed в QGridLayout (лейблы НАД полями) ===
         size_seed_grid = QGridLayout()
         size_seed_grid.addWidget(QLabel("Size:"), 0, 0)
@@ -289,6 +299,13 @@ class DiffusersSettingsPanel(QWidget):
             if index >= 0:
                 self.scheduler_combo.setCurrentIndex(index)
         
+        # Timestep Spacing
+        timestep_spacing = json_data.get("timestep_spacing", "")
+        if timestep_spacing:
+            index = self.timestep_spacing_combo.findText(timestep_spacing)
+            if index >= 0:
+                self.timestep_spacing_combo.setCurrentIndex(index)
+        
         # Steps
         steps = json_data.get("total_steps", 0)
         if steps > 0:
@@ -330,6 +347,7 @@ class DiffusersSettingsPanel(QWidget):
         params = {
             "model": self.model_combo.currentText(),
             "scheduler": self.scheduler_combo.currentText(),
+            "timestep_spacing": self.timestep_spacing_combo.currentText(),
             "steps": self.steps_spin.value(),
             "cfg": self.cfg_spin.value(),
             "width": width,

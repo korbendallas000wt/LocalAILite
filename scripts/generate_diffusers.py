@@ -51,6 +51,8 @@ def main():
     parser.add_argument("--height", type=int, default=1024)
     parser.add_argument("--seed", type=int, default=-1)
     parser.add_argument("--scheduler", default="Euler")
+    parser.add_argument("--timestep_spacing", default="leading",
+                        help="Распределение шагов по шкале времени: leading / linspace / trailing")
     parser.add_argument("--device", default="cpu")
     
     # Аргументы от DiffusersWorker
@@ -198,6 +200,7 @@ def main():
             "negative_prompt": args.negative_prompt,
             "model": os.path.basename(args.model),
             "scheduler": args.scheduler,
+            "timestep_spacing": args.timestep_spacing,
             "steps": args.steps,
             "cfg": args.cfg,
             "size": f"{args.width}x{args.height}",
@@ -267,6 +270,7 @@ def main():
             negative_prompt=args.negative_prompt,
             num_inference_steps=remaining_steps,
             guidance_scale=args.cfg,
+            timestep_spacing=args.timestep_spacing,
             width=args.width,
             height=args.height,
             generator=generator,
