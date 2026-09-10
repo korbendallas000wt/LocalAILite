@@ -866,3 +866,30 @@ def add_model_by_ref(config: Config, ref: str, model_type: str) -> str:
     }
     _save_registry_v3(config, registry_data)
     return model_id
+
+
+# ─── Пресеты моделей (Этап 4.1: ядро) ───
+
+def get_model_entry(config: Config, model_id: str) -> dict:
+    """Возвращает полную запись модели из реестра по её ID.
+    
+    Возвращает пустой словарь, если модель не найдена.
+    Используется модулем model_presets для доступа к полю `default_preset`.
+    """
+    registry_data = _load_registry_v3(config)
+    return registry_data.get("models", {}).get(model_id, {})
+
+
+def set_model_preset(config: Config, model_id: str, preset: dict) -> bool:
+    """Сохраняет пресет модели в реестр (поле `default_preset`).
+    
+    Возвращает True при успехе, False если модель не найдена.
+    Обновляет `updated_at` записи модели.
+    """
+    registry_data = _load_registry_v3(config)
+    if model_id not in registry_data.get("models", {}):
+        return False
+    registry_data["models"][model_id]["default_preset"] = preset
+    registry_data["models"][model_id]["updated_at"] = _now_iso()
+    _save_registry_v3(config, registry_data)
+    return True
