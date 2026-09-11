@@ -256,6 +256,12 @@ class ModelManagerDialog(QDialog):
         self._meta_label.setWordWrap(True)
         self._meta_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         data_layout.addWidget(self._meta_label)
+        # Кнопка «Настроить пресет» (для всех моделей, как только появилась в реестре)
+        self._preset_btn = QPushButton("Настроить пресет")
+        self._preset_btn.setToolTip("Настроить параметры по умолчанию для этой модели")
+        self._preset_btn.setEnabled(False)
+        self._preset_btn.clicked.connect(self._on_preset_btn_clicked)
+        data_layout.addWidget(self._preset_btn)
         info_bar.addWidget(data_group)
 
         # Блок 2: Описание (имя модели + описание)
@@ -265,6 +271,12 @@ class ModelManagerDialog(QDialog):
         self._desc_label.setWordWrap(True)
         self._desc_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         desc_layout.addWidget(self._desc_label)
+        # Кнопка «Убрать из списка» (перенесена из блока «Проверка» для симметрии)
+        self._remove_btn = QPushButton("Убрать из списка")
+        self._remove_btn.setToolTip("Удалить запись из реестра (для недоскачанных моделей, файлы не трогаются)")
+        self._remove_btn.setEnabled(False)
+        self._remove_btn.clicked.connect(self._on_remove_btn_clicked)
+        desc_layout.addWidget(self._remove_btn)
         info_bar.addWidget(desc_group, 1)
 
         # Блок 3: Проверка (чек-лист + хэш-проверка; железо — колонка таблицы)
@@ -281,11 +293,6 @@ class ModelManagerDialog(QDialog):
         self._hash_btn.setEnabled(False)
         self._hash_btn.clicked.connect(self._on_hash_btn_clicked)
         check_layout.addWidget(self._hash_btn)
-        self._remove_btn = QPushButton("Убрать из списка")
-        self._remove_btn.setToolTip("Удалить запись из реестра (для недоскачанных моделей, файлы не трогаются)")
-        self._remove_btn.setVisible(False)
-        self._remove_btn.clicked.connect(self._on_remove_btn_clicked)
-        check_layout.addWidget(self._remove_btn)
         info_bar.addWidget(check_group)
 
         # Обёртка панели с фиксированной высотой
@@ -915,6 +922,19 @@ class ModelManagerDialog(QDialog):
 
     # === Панель информации (3 блока) ===
 
+    def _on_preset_btn_clicked(self):
+        """Открывает диалог настройки пресета для выбранной модели.
+        
+        Этап 5.2: заглушка — показывает model_id для проверки передачи данных.
+        Этап 5.3: заменится на открытие диалога пресетов.
+        """
+        if not self._selected_model_id:
+            return
+        # Заглушка до Этапа 5.3 (создание диалога пресетов)
+        from PyQt6.QtWidgets import QMessageBox
+        msg = "Диалог пресетов для модели: " + self._selected_model_id + " (Этап 5.3 — в разработке)"
+        QMessageBox.information(self, "Пресет модели", msg)
+
     def _on_current_item_changed(self, item, previous):
         if item is None:
             return
@@ -929,7 +949,8 @@ class ModelManagerDialog(QDialog):
         self._desc_label.setText("")
         self._checklist_label.setText("")
         self._hash_btn.setEnabled(False)
-        self._remove_btn.setVisible(False)
+        self._preset_btn.setEnabled(False)
+        self._remove_btn.setEnabled(False)
 
     def _update_details(self, model_row: dict):
         # Блок 1: Данные (без имени — оно в «Описании»; путь в одну строку)
@@ -1029,6 +1050,8 @@ class ModelManagerDialog(QDialog):
             return
         status = model_row["status"]
         self._hash_btn.setEnabled(status in ("downloaded", "valid", "installed", "invalid"))
+        # Пресет можно настраивать для любой модели, включая недоскачанные
+        self._preset_btn.setEnabled(True)
 
     def _on_hash_btn_clicked(self):
         row = self._get_selected_row()
@@ -1036,18 +1059,18 @@ class ModelManagerDialog(QDialog):
             self._deep_validate_model(row)
 
     def _update_remove_btn(self, model_row: dict):
-        """Кнопка «Убрать из списка» показана для недоскачанных и битых моделей.
+        """Кнопка «Убрать из списка» активна для недоскачанных моделей.
 
-        Для скачанных/установленных моделей кнопка скрыта,
-        чтобы не занимать место в блоке «Проверка» рядом с чек-листом.
+        Для скачанных/установленных моделей кнопка неактивна (серая),
+        но остаётся видимой для симметрии блоков (по одной кнопке в каждом).
         """
         if self._is_verifying or self._is_downloading:
-            self._remove_btn.setVisible(False)
+            self._remove_btn.setEnabled(False)
             return
         status = model_row.get("status", "")
-        # Показываем только для: "download" (недоскачана, файлов нет)
+        # Активна только для: "download" (недоскачана, файлов нет)
         # Для "invalid" (битая) есть кнопка "Удалить" в строке таблицы
-        self._remove_btn.setVisible(status == "download")
+        self._remove_btn.setEnabled(status == "download")
 
     def _on_remove_btn_clicked(self):
         row = self._get_selected_row()
