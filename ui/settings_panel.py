@@ -6,6 +6,10 @@ from utils.config import Config
 import requests
 
 
+from core.model_presets import get_effective_preset
+from core.models_registry import get_model_id_by_ollama_name
+
+
 class SettingsPanel(QWidget):
     # Сигналы для OllamaTab
     chat_selected = pyqtSignal(str)  # Путь к JSON файлу
@@ -107,8 +111,61 @@ class SettingsPanel(QWidget):
         self.load_settings()
         self.load_models()
         
+        # Автоприменение пресета при выборе модели
+        self.model_combo.currentTextChanged.connect(self._on_model_changed)
+        
         # Начальное состояние: свободное, режим "Новый"
         self._update_ui_state("new", locked=False)
+
+    def _on_model_changed(self, name_with_tag: str):
+        """Применяет пресет модели при смене выбора в комбобоксе.
+        
+        Режимы:
+        - «Новый»: пресет применяется автоматически при смене модели
+        - «Изменить»: смена модели НЕ применяет пресет (настройки из чата сохраняются)
+        - «Продолжить»: смена модели НЕ применяет пресет (настройки из чата сохраняются)
+        """
+        if not name_with_tag:
+            return
+        
+        # Пресет применяется только в режиме «Новый»
+        if not self.mode_new_radio.isChecked():
+            return
+        
+        # Получаем ключ реестра (model_id) по имя:тег
+        model_id = get_model_id_by_ollama_name(self.config, name_with_tag)
+        if not model_id:
+            return
+        
+        # Загружаем эффективный пресет
+        preset = get_effective_preset(self.config, model_id)
+        if not preset:
+            return
+        
+        # Блокируем сигналы при установке значений (защита от рекурсии)
+        self.blockSignals(True)
+        try:
+            # Температура
+            temperature = preset.get("temperature")
+            if temperature is not None:
+                self.temp_spin.setValue(temperature)
+            
+            # Топ-п
+            top_p = preset.get("top_p")
+            if top_p is not None:
+                self.top_p_spin.setValue(top_p)
+            
+            # Макс-токены
+            max_tokens = preset.get("max_tokens")
+            if max_tokens is not None:
+                self.max_tokens_spin.setValue(max_tokens)
+            
+            # Таймаут (опционально, -1 = глобальный)
+            timeout = preset.get("timeout", -1)
+            if timeout is not None and timeout > 0:
+                self.timeout_spin.setValue(timeout)
+        finally:
+            self.blockSignals(False)
 
     def _on_mode_changed(self):
         if self.mode_new_radio.isChecked():

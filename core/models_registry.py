@@ -945,3 +945,22 @@ def get_model_page_url(config: Config, model_id: str) -> str:
         return f"https://ollama.com/library/{base_name}"
 
     return ""
+
+
+def get_model_id_by_ollama_name(config: Config, name_with_tag: str) -> str:
+    """Возвращает ключ реестра (model_id) по имени модели Олламы в формате имя:тег.
+
+    Ищет в реестре модель с source.ref == name_with_tag и type == 'ollama'.
+    Возвращает пустую строку, если модель не найдена.
+
+    Используется панелью настроек Олламы для маппинга выбора комбобокса
+    (имя:тег из /api/tags) на внутренний ключ реестра, который ожидает модель пресетов.
+    """
+    registry_data = _load_registry_v3(config)
+    for model_id, model in registry_data.get("models", {}).items():
+        if model.get("type") != "ollama":
+            continue
+        ref = model.get("source", {}).get("ref", "")
+        if ref == name_with_tag:
+            return model_id
+    return ""
