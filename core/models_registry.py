@@ -907,3 +907,41 @@ def get_model_id_by_display_name(config: Config, display_name: str) -> str:
         if model.get("display_name") == display_name:
             return model_id
     return ""
+
+
+def get_model_page_url(config: Config, model_id: str) -> str:
+    """Возвращает ссылку на страницу модели (для перехода в браузере).
+
+    Конструируется из `source.ref` и `type` модели:
+    - Диффузерс: `https://huggingface.co/{ref}` (например, `Lykon/dreamshaper-xl-v2-turbo`)
+    - Оллама: `https://ollama.com/library/{base_name}` (базовое имя из `имя:тег`)
+
+    Возвращает пустую строку, если модель не найдена или `ref` пустой.
+    Используется диалогом пресетов для показа кликабельной ссылки на страницу модели,
+    чтобы пользователь мог свериться с рекомендациями при настройке пресета.
+    """
+    model = get_model_entry(config, model_id)
+    if not model:
+        return ""
+
+    ref = model.get("source", {}).get("ref", "")
+    model_type = model.get("type", "")
+
+    if not ref:
+        return ""
+
+    if model_type == "diffusers":
+        # Формат: автор/модель (например, `Lykon/dreamshaper-xl-v2-turbo`)
+        # Не добавляем ссылку, если нет '/' (нестандартный формат)
+        if "/" not in ref:
+            return ""
+        return f"https://huggingface.co/{ref}"
+    elif model_type == "ollama":
+        # Формат: имя:тег (например, `llama3.1:8b`)
+        # Извлекаем базовое имя до двоеточия
+        base_name = ref.split(":")[0] if ":" in ref else ref
+        if not base_name:
+            return ""
+        return f"https://ollama.com/library/{base_name}"
+
+    return ""
