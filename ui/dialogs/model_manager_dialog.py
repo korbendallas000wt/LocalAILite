@@ -33,6 +33,7 @@ from core.models_registry import (list_installed_ollama_models,
                                    list_all_models, update_model_validation,
                                    add_model_by_ref, register_from_path,
                                    remove_model_from_registry)
+from ui.dialogs.preset_edit_dialog import PresetEditDialog
 from core.model_verifier import DeepValidationWorker
 from core.model_installer import (DiffusersInstallWorker, OllamaInstallWorker,
                                    derive_ollama_name_from_gguf)
@@ -925,15 +926,22 @@ class ModelManagerDialog(QDialog):
     def _on_preset_btn_clicked(self):
         """Открывает диалог настройки пресета для выбранной модели.
         
-        Этап 5.2: заглушка — показывает model_id для проверки передачи данных.
-        Этап 5.3: заменится на открытие диалога пресетов.
+        Этап 5.3: открытие PresetEditDialog с передачей config, model_id и type.
+        После сохранения диалог обновит пресет в реестре, и он автоматически
+        применится при следующем выборе модели в комбобоксе.
         """
         if not self._selected_model_id:
             return
-        # Заглушка до Этапа 5.3 (создание диалога пресетов)
-        from PyQt6.QtWidgets import QMessageBox
-        msg = "Диалог пресетов для модели: " + self._selected_model_id + " (Этап 5.3 — в разработке)"
-        QMessageBox.information(self, "Пресет модели", msg)
+        
+        # Получаем тип модели из текущей строки (для выбора полей в диалоге)
+        model_row = self._get_selected_row()
+        if not model_row:
+            return
+        model_type = model_row.get("type", "")
+        
+        # Открываем диалог пресетов
+        dialog = PresetEditDialog(self.config, self._selected_model_id, model_type, self)
+        dialog.exec()
 
     def _on_current_item_changed(self, item, previous):
         if item is None:
