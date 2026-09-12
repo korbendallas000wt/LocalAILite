@@ -43,12 +43,16 @@
     │   ├── model_verifier.py            # Асинхронная хэш-проверка моделей в фоне (DeepValidationWorker)
     │   ├── model_installer.py           # Установка моделей: перемещение в папку моделей + создание из GGUF
     │   ├── hf_search.py                 # Поиск моделей на HuggingFace через публичный API (QThread)
+    │   ├── model_presets.py             # Пресеты моделей: дефолтные параметры генерации (поле default_preset в реестре)
+    │   ├── preset_cheatsheet.py         # Загрузка образовательной шпаргалки по пресетам
+    │   ├── info/                        # Информационные файлы (шпаргалки, справочники — не вшитые в код)
+    │   │   └── preset_cheatsheet.json   # Образовательный справочник по пресетам (соответствия семплеров, словарь параметров)
     │   ├── resource_manager.py              # Управление ресурсом: acquire/release, 2 арендатора
     │   ├── resource_monitor.py              # Мониторинг RAM/CPU, реальная проверка RAM, лимиты, PID
     │   └── updater.py                     # Модуль обновлений v2.1: проверка версий (асинхронно, QNetworkAccessManager) + скачивание/установка (QThread)
     │
     ├── scripts/                             # CLI-скрипты (запускаются в venv)
-    │   ├── generate_diffusers.py            # Генерация SDXL: callback_on_step_end, чекпоинты, точный resume
+    │   ├── generate_diffusers.py            # Генерация SDXL: callback_on_step_end, чекпоинты, точный resume, timestep_spacing, сигмы Карраса
     │   ├── compare_images.py                # Попиксельное сравнение изображений (numpy)
     │   ├── encode_image.py                  # Кодирование изображения в latents через VAE (для img2img)
     │   ├── test_vae_roundtrip.py            # Тест VAE encode/decode roundtrip
@@ -68,6 +72,8 @@
     │   │   ├── history_save_dialog.py       # Диалог сохранения истории генерации
     │   │   ├── folder_dialog.py             # Обёртка над QFileDialog с режимами (navigate/select)
     │   │   ├── model_manager_dialog.py      # Менеджер моделей v4: 4 вкладки (Реестр/Добавить/Поиск/Ссылки), чек-лист, колонка «Система»
+    │   │   ├── preset_edit_dialog.py        # Диалог настройки пресета модели (калька панели настроек + ссылка на страницу модели)
+    │   │   ├── preset_cheatsheet_dialog.py  # Диалог справки по пресетам (толковый словарь параметров, соответствия семплеров)
     │   │   └── settings/
     │   │       ├── settings_dialog.py       # Окно настроек (вкладки)
     │   │       ├── paths_settings_widget.py         # Вкладка Общие
@@ -78,7 +84,7 @@
     │   └── tabs/                            # Вкладки главного окна
     │       ├── ollama_tab.py                # Чат: ChatWidget + SettingsPanel + OllamaClient
     │       ├── diffusers_tab.py             # Генерация: preview + settings + DiffusersWorker
-    │       ├── diffusers_settings_panel.py  # Настройки Diffusers + список архивных чекпоинтов
+    │       ├── diffusers_settings_panel.py  # Настройки Diffusers + автоприменение пресетов + «Сбросить к пресету» + сигмы Карраса
     │       ├── image_prep_tab.py            # Visual editor: превью + галерея + обработка
     │       └── image_prep_panel.py          # Правая панель Visual editor (пресет, crop mode)
     │
@@ -186,6 +192,12 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/model_installer.py
 - **hf_search.py** — поиск моделей на HuggingFace через публичный API (QThread)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/hf_search.py
+- **model_presets.py** — пресеты моделей: дефолтные параметры генерации (поле default_preset в реестре)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/model_presets.py
+- **preset_cheatsheet.py** — загрузка образовательной шпаргалки по пресетам
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/preset_cheatsheet.py
+- **info/preset_cheatsheet.json** — образовательный справочник по пресетам (соответствия семплеров, словарь параметров)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/info/preset_cheatsheet.json
 
 
 ### installer/ — инсталлятор
@@ -256,8 +268,12 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/history_save_dialog.py
 - **dialogs/folder_dialog.py** — обёртка над QFileDialog с режимами (navigate/select)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/folder_dialog.py
-dialogs/model_manager_dialog.py — менеджер моделей: список, вердикты по железу, скачивание с прогрессом и отменой
+dialogs/model_manager_dialog.py — Менеджер моделей v4: 4 вкладки (Реестр/Добавить/Поиск/Ссылки), 5 статусов, колонка «Система», чек-лист, хэш-проверка, поиск на HuggingFace
 https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/model_manager_dialog.py
+- **preset_edit_dialog.py** — диалог настройки пресета модели (калька панели настроек + ссылка на страницу модели)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/preset_edit_dialog.py
+- **preset_cheatsheet_dialog.py** — диалог справки по пресетам (толковый словарь параметров, соответствия семплеров)
+  https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/preset_cheatsheet_dialog.py
 - **dialogs/settings/settings_dialog.py** — окно настроек (вкладки)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/settings/settings_dialog.py
 dialogs/settings/update_settings_widget.py — вкладка Обновления (v2.0)
@@ -266,7 +282,7 @@ https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/dialogs/s
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/tabs/ollama_tab.py
 - **tabs/diffusers_tab.py** — генерация: preview + settings + DiffusersWorker
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/tabs/diffusers_tab.py
-- **tabs/diffusers_settings_panel.py** — настройки Diffusers + архивные чекпоинты
+- **tabs/diffusers_settings_panel.py** — настройки Diffusers + автоприменение пресетов + «Сбросить к пресету» + сигмы Карраса
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/tabs/diffusers_settings_panel.py
 - **tabs/image_prep_tab.py** — Visual editor: превью + галерея + обработка
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/ui/tabs/image_prep_tab.py

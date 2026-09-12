@@ -22,11 +22,13 @@
 | ui/chat_widget.py | v1.0.0 | Чат-браузер. QTextBrowser с рендерингом Markdown, стриминг токенов, копирование кода по клику, контекстное меню, карточки вложений с сигналами open/remove. |
 | ui/chat_control_panel.py | v1.0.0 | Панель управления чатом (4 кнопки: Новый, Отменить, Файл, Сохранить). |
 | ui/settings_panel.py | v1.0.0 | Настройки Ollama. Правая панель (модель, temperature, top_p, max_tokens, timeout, stream, system_prompt). |
-| ui/tabs/diffusers_settings_panel.py | v1.0.0 | Настройки Diffusers. Модель, scheduler, steps, cfg, size, seed, negative_prompt, список архивных чекпоинтов. |
+| ui/tabs/diffusers_settings_panel.py | v1.1.0 | Настройки Diffusers + автоприменение пресетов при смене модели + кнопка «Сбросить к пресету» + сигмы Карраса (use_karras_sigmas, чекбокс активен только для DPMSolverMultistepScheduler) + список архивных чекпоинтов. |
 | ui/tabs/image_prep_panel.py | v1.1.0 | Правая панель Visual editor. Пресет разрешения, режим обрезки (center/letterbox/stretch). |
 | ui/dialogs/paths_dialog.py | v1.0.0 | Стартовый диалог. Настройка путей (venv, модели, output, Ollama URL) с валидацией. |
 | ui/dialogs/history_save_dialog.py | v1.2.0 | Диалог сохранения истории генерации (чекбокс создания превью, таймер авто-сохранения). |
 | ui/dialogs/model_manager_dialog.py | v4.0.0 | Менеджер моделей: 4 вкладки (Реестр/Добавить/Поиск/Ссылки), 5 статусов с цветной индикацией, колонка «Система» (цветной вердикт), чек-лист быстрой проверки, хэш-проверка в фоне, поиск на HuggingFace. Одна загрузка за раз. |
+| ui/dialogs/preset_edit_dialog.py | v1.0.0 | Диалог настройки пресета модели: калька панели настроек + ссылка на страницу модели. Сохраняет пресет в реестр через save_preset(). Чекбокс Karras с динамической активацией, кнопка «? Шпаргалка». |
+| ui/dialogs/preset_cheatsheet_dialog.py | v1.0.0 | Модальный диалог справки по пресетам (QTextBrowser): толковый словарь параметров, таблица соответствий семплеров, рекомендации по архитектурам, общие советы. Системные цвета (тёмная/светлая тема), масштабирование Ctrl+колесо. |
 | ui/dialogs/settings/settings_dialog.py | v1.0.0 | Окно настроек. Вкладки (Общие, Diffusers, Ресурсы). |
 | ui/dialogs/settings/paths_settings_widget.py | v1.0.0 | Вкладка Общие. Настройки путей с валидацией в реальном времени. |
 | ui/dialogs/settings/chat_settings_widget.py | v1.0.0 | Вкладка Чат. Формат сохранения (JSON/TXT), папка чатов (через FolderDialog mode=select), автозаголовок через LLM. |
@@ -49,8 +51,11 @@
 | core/model_verifier.py | v1.0.0 | Асинхронная хэш-проверка моделей в фоне (DeepValidationWorker, QThread) с прогрессом и отменой. Используется Менеджером моделей для кнопки «Хэш-проверка». |
 | core/model_installer.py | v1.0.0 | Установка моделей: DiffusersInstallWorker (перемещение в папку моделей — атомарный rename или копирование с прогрессом) + OllamaInstallWorker (создание модели из GGUF через \'ollama create\'). |
 | core/hf_search.py | v1.0.0 | Поиск моделей на HuggingFace через публичный API (HFSearchWorker, QThread). Детекция базы (SDXL/Flux/SD3/SD1.5), категории (checkpoint/lora/vae), формата (hf_cache/file). |
+| core/model_presets.py | v1.0.0 | Пресеты моделей: дефолтные параметры генерации (поле default_preset в реестре). get_effective_preset(), save_preset(), get_builtin_default(). Поле use_karras_sigmas для точной адаптации из A1111/Forge. |
+| core/preset_cheatsheet.py | v1.0.0 | Загрузка образовательной шпаргалки по пресетам из core/info/preset_cheatsheet.json. load_cheatsheet(), get_sampler_mapping(), get_parameter_glossary(), get_parameter_info(), get_model_architectures(), get_general_tips(). |
+| core/info/preset_cheatsheet.json | v1.0.0 | Образовательный справочник по пресетам (171 строка): таблица соответствий семплеров A1111/Forge → наши планировщики, толковый словарь параметров (7 параметров), рекомендации по архитектурам, общие советы. |
 | core/ollama_manager.py | v1.2.0 | Управление процессом ollama serve (старт/стоп), проверка порта 11434, обработка конфликтов, логирование, PID-файлы, проверка RAM, CPU affinity, nice-приоритет. |
-| core/diffusers_worker.py | v1.2.0 | QProcess-обёртка для scripts/generate_diffusers.py, парсинг JSON-вывода, логирование, сигналы (step_updated, generation_finished, error_occurred). Проверка RAM, CPU limits, history_dir. Адаптация под diffusers 0.39+ (callback_on_step_end). |
+| core/diffusers_worker.py | v1.3.0 | QProcess-обёртка для scripts/generate_diffusers.py, парсинг JSON-вывода, логирование, сигналы (step_updated, generation_finished, error_occurred). Проверка RAM, CPU limits, history_dir. Адаптация под diffusers 0.39+ (callback_on_step_end). Условная передача --use-karras-sigmas. |
 | core/checkpoint_manager.py | v1.0.0 | Менеджер чекпоинтов генерации. Сохранение latents + scheduler + generator в PT, метаданные в JSON, архивация с timestamp, загрузка из архива. |
 | core/history_manager.py | v1.1.0 | Менеджер истории генерации. Создаёт папки data/history/{timestamp}/, сохраняет metadata.json, копирует PNG на каждом шаге, список историй, удаление. |
 | core/resource_manager.py | v1.2.0 | Управление ресурсом (GPU/RAM): acquire/release, 2 арендатора (Ollama, Diffusers). Переключение табов + выгрузка неактивных модулей. |
@@ -66,7 +71,7 @@
 
 | Модуль | Версия | Роль |
 |--------|--------|------|
-| scripts/generate_diffusers.py | v1.2.1 | CLI-скрипт генерации SDXL. Поддержка single-file моделей, HF-формата, точный resume из чекпоинта (срез timesteps + компенсация init_noise_sigma), callback_on_step_end (diffusers 0.39+), сохранение истории (PT + JSON на каждом шаге), защита от перезаписи PNG, оптимизация CPU (torch.set_num_threads). |
+| scripts/generate_diffusers.py | v1.3.0 | CLI-скрипт генерации SDXL. Поддержка single-file моделей, HF-формата, точный resume из чекпоинта (срез timesteps + компенсация init_noise_sigma), callback_on_step_end (diffusers 0.39+), сохранение истории (PT + JSON на каждом шаге), защита от перезаписи PNG, оптимизация CPU (torch.set_num_threads), timestep_spacing (распределение шагов), сигмы Карраса (use_karras_sigmas для DPMSolverMultistepScheduler). |
 | scripts/compare_images.py | v1.2.1 | Попиксельное сравнение изображений через numpy (для проверки точности resume). |
 | scripts/encode_image.py | v1.1.0 | Кодирование изображения в latents через VAE (для img2img подготовки). |
 | scripts/test_vae_roundtrip.py | v1.1.0 | Тест VAE encode/decode roundtrip. |
