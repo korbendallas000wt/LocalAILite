@@ -27,6 +27,11 @@ class UpdateSettingsWidget(QWidget):
         self._build_ui()
         self._connect_signals()
 
+        # Локальная версия читается из файла VERSION без сети — показываем сразу.
+        # Не ждём сетевой проверки (которая может висеть минуты при таймаутах).
+        local_version = self.updater.get_local_version()
+        self.lbl_current.setText(f"Текущая версия: {local_version}")
+
         # Первичная проверка при открытии вкладки
         self._set_status("Проверка обновлений...")
         self.updater.check_for_updates()
@@ -110,7 +115,11 @@ class UpdateSettingsWidget(QWidget):
         self.btn_update.setEnabled(False)
         self._set_status("У вас последняя версия.")
 
-    def _on_check_failed(self, error):
+    def _on_check_failed(self, error, current):
+        # Текущая версия известна локально (читается из файла VERSION без сети),
+        # поэтому при ошибке проверки всё равно показываем её, а не прочерк.
+        self.lbl_current.setText(f"Текущая версия: {current}")
+        self.lbl_available.setText("Доступная версия: неизвестно")
         self._set_status(f"⚠ Ошибка проверки: {error}")
         self.btn_update.setEnabled(False)
 
