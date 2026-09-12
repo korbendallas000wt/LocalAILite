@@ -1,9 +1,11 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QComboBox,
 QSpinBox, QDoubleSpinBox, QLineEdit, QPushButton,
-QTextEdit, QHBoxLayout, QLabel, QRadioButton)
+QTextEdit, QHBoxLayout, QLabel, QRadioButton, QCheckBox)
 from PyQt6.QtCore import Qt, pyqtSignal
 import random
 import os
+from core.model_presets import get_effective_preset
+from core.models_registry import get_model_id_by_display_name
 
 class DiffusersSettingsPanel(QWidget):
     """Панель настроек Diffusers с управлением чекпоинтами и режимами"""
@@ -31,6 +33,9 @@ class DiffusersSettingsPanel(QWidget):
         model_row.addWidget(self.refresh_models_btn)
         layout.addLayout(model_row)
         
+        # Автоприменение пресета при выборе модели
+        self.model_combo.currentTextChanged.connect(self._on_model_changed)
+        
         # === Scheduler ===
         layout.addWidget(QLabel("Scheduler:"))
         self.scheduler_combo = QComboBox()
@@ -42,7 +47,27 @@ class DiffusersSettingsPanel(QWidget):
             "PNDMScheduler"
         ])
         self.scheduler_combo.setCurrentText(self.config.get_sdxl_scheduler())
+        self.scheduler_combo.currentTextChanged.connect(self._on_scheduler_changed)
         layout.addWidget(self.scheduler_combo)
+        
+        # === Karras sigmas (только для DPMSolverMultistepScheduler) ===
+        self.use_karras_check = QCheckBox("Использовать сигмы Карраса (Karras)")
+        self.use_karras_check.setChecked(self.config.get("sdxl/use_karras_sigmas", "false") == "true")
+        self.use_karras_check.toggled.connect(
+            lambda checked: self.config.set("sdxl/use_karras_sigmas", "true" if checked else "false"))
+        layout.addWidget(self.use_karras_check)
+        # Начальная активация чекбокса в зависимости от планировщика
+        self._on_scheduler_changed(self.scheduler_combo.currentText())
+        
+        # === Timestep Spacing (распределение шагов по шкале времени) ===
+        layout.addWidget(QLabel("Timestep Spacing:"))
+        self.timestep_spacing_combo = QComboBox()
+        self.timestep_spacing_combo.addItems(["leading", "linspace", "trailing"])
+        self.timestep_spacing_combo.setCurrentText(self.config.get("sdxl/timestep_spacing", "leading"))
+        self.timestep_spacing_combo.setToolTip("Как шаги распределяются по шкале времени:\nleading (по умолчанию) / linspace (равномерно) / trailing (с конца)")
+        self.timestep_spacing_combo.currentTextChanged.connect(
+            lambda text: self.config.set("sdxl/timestep_spacing", text))
+        layout.addWidget(self.timestep_spacing_combo)
         
         # === Size + Seed в QGridLayout (лейблы НАД полями) ===
         size_seed_grid = QGridLayout()
@@ -122,7 +147,7 @@ class DiffusersSettingsPanel(QWidget):
         layout.addLayout(image_row)
         
         # === Кнопка очистки ===
-        self.clear_btn = QPushButton("Очистить настройки")
+        self.clear_btn = QPushButton("Сбросить к пресету")
         self.clear_btn.clicked.connect(self._clear_settings)
         layout.addWidget(self.clear_btn)
         
@@ -246,14 +271,190 @@ class DiffusersSettingsPanel(QWidget):
             if current_text and current_text in display_names:
                 self.model_combo.setCurrentText(current_text)
     
+    def _on_scheduler_changed(self, scheduler_name: str):
+        """Активирует/деактивирует чекбокс Karras в зависимости от планировщика.
+        
+        Karras сигмы поддерживаются только планировщиком DPMSolverMultistepScheduler.
+        Для остальных чекбокс деактивируется (значение игнорируется скриптом).
+        """
+        supports_karras = (scheduler_name == "DPMSolverMultistepScheduler")
+        self.use_karras_check.setEnabled(supports_karras)
+        if not supports_karras:
+            self.use_karras_check.setChecked(False)
+
+    def _on_model_changed(self, display_name: str):
+        """Применяет пресет модели при смене выбора в комбобоксе.
+        
+        Загружает эффективный пресет (сохранённый + дефолты) и устанавливает
+        значения во все поля панели. Использует blockSignals для защиты
+        от рекурсии при установке значений.
+        
+        Режимы:
+        - «Создать»: пресет применяется автоматически при смене модели
+        - «Изменить»: смена модели НЕ применяет пресет (настройки из чекпоинта)
+        - «Продолжить»: модель заблокирована, смена невозможна
+        """
+        if not display_name:
+            return
+        
+        # Пресет применяется только в режиме «Создать»
+        # В режиме «Изменить» пользователь меняет модель, но настройки из чекпоинта сохраняются
+        if not self.mode_create_radio.isChecked():
+            return
+        
+        # Получаем ключ реестра (model_id) по отображаемому имени
+        model_id = get_model_id_by_display_name(self.config, display_name)
+        
+        if not model_id:
+            return
+        
+        # Загружаем эффективный пресет
+        preset = get_effective_preset(self.config, model_id)
+        if not preset:
+            return
+        
+        # Блокируем сигналы при установке значений (защита от рекурсии)
+        self.blockSignals(True)
+        try:
+            # Планировщик
+            scheduler = preset.get("scheduler", "")
+            if scheduler:
+                idx = self.scheduler_combo.findText(scheduler)
+                if idx >= 0:
+                    self.scheduler_combo.setCurrentIndex(idx)
+            
+            # Timestep Spacing
+            timestep_spacing = preset.get("timestep_spacing", "")
+            if timestep_spacing:
+                idx = self.timestep_spacing_combo.findText(timestep_spacing)
+                if idx >= 0:
+                    self.timestep_spacing_combo.setCurrentIndex(idx)
+            
+            # Karras sigmas (применяется только если планировщик поддерживает)
+            use_karras = preset.get("use_karras_sigmas", False)
+            if self.use_karras_check.isEnabled():
+                self.use_karras_check.setChecked(use_karras)
+            
+            # Шаги
+            steps = preset.get("steps")
+            if steps is not None:
+                self.steps_spin.setValue(steps)
+            
+            # CFG
+            cfg = preset.get("cfg")
+            if cfg is not None:
+                self.cfg_spin.setValue(cfg)
+            
+            # Размер
+            width = preset.get("width")
+            height = preset.get("height")
+            if width and height:
+                size_text = f"{width}×{height}"
+                idx = self.size_combo.findText(size_text)
+                if idx >= 0:
+                    self.size_combo.setCurrentIndex(idx)
+            
+            # Сид
+            seed = preset.get("seed")
+            if seed is not None:
+                self.seed_edit.setText(str(seed))
+            
+            # Негативный промпт
+            negative_prompt = preset.get("negative_prompt")
+            if negative_prompt is not None:
+                self.negative_prompt.setPlainText(negative_prompt)
+            
+            # Strength
+            strength = preset.get("strength")
+            if strength is not None:
+                self.strength_spin.setValue(strength)
+        finally:
+            self.blockSignals(False)
+
     def _random_seed(self):
         self.seed_edit.setText(str(random.randint(0, 2**32 - 1)))
     
     def _clear_settings(self):
-        self.negative_prompt.clear()
-        self.seed_edit.setText("-1")
-        self.checkpoint_edit.clear()
-        self.init_image_edit.clear()
+        """Применяет пресет текущей выбранной модели.
+        
+        Загружает эффективный пресет через get_effective_preset() и устанавливает
+        значения во все поля пресета (планировщик, timestep_spacing, размер, сид,
+        шаги, cfg, strength, негативный промпт).
+        
+        НЕ трогает: checkpoint_edit, init_image_edit (не параметры пресета).
+        """
+        display_name = self.model_combo.currentText()
+        if not display_name:
+            return
+        
+        # Получаем ключ реестра (model_id) по display_name
+        from core.models_registry import get_model_id_by_display_name
+        model_id = get_model_id_by_display_name(self.config, display_name)
+        if not model_id:
+            return
+        
+        # Загружаем эффективный пресет
+        preset = get_effective_preset(self.config, model_id)
+        if not preset:
+            return
+        
+        # Блокируем сигналы при установке значений (защита от рекурсии)
+        self.blockSignals(True)
+        try:
+            # Планировщик
+            scheduler = preset.get("scheduler", "")
+            if scheduler:
+                idx = self.scheduler_combo.findText(scheduler)
+                if idx >= 0:
+                    self.scheduler_combo.setCurrentIndex(idx)
+            
+            # Timestep Spacing
+            timestep_spacing = preset.get("timestep_spacing", "")
+            if timestep_spacing:
+                idx = self.timestep_spacing_combo.findText(timestep_spacing)
+                if idx >= 0:
+                    self.timestep_spacing_combo.setCurrentIndex(idx)
+            
+            # Karras sigmas (применяется только если планировщик поддерживает)
+            use_karras = preset.get("use_karras_sigmas", False)
+            if self.use_karras_check.isEnabled():
+                self.use_karras_check.setChecked(use_karras)
+            
+            # Шаги
+            steps = preset.get("steps")
+            if steps is not None:
+                self.steps_spin.setValue(steps)
+            
+            # CFG
+            cfg = preset.get("cfg")
+            if cfg is not None:
+                self.cfg_spin.setValue(cfg)
+            
+            # Размер
+            width = preset.get("width")
+            height = preset.get("height")
+            if width and height:
+                size_text = f"{width}×{height}"
+                idx = self.size_combo.findText(size_text)
+                if idx >= 0:
+                    self.size_combo.setCurrentIndex(idx)
+            
+            # Сид
+            seed = preset.get("seed")
+            if seed is not None:
+                self.seed_edit.setText(str(seed))
+            
+            # Негативный промпт
+            negative_prompt = preset.get("negative_prompt")
+            if negative_prompt is not None:
+                self.negative_prompt.setPlainText(negative_prompt)
+            
+            # Strength
+            strength = preset.get("strength")
+            if strength is not None:
+                self.strength_spin.setValue(strength)
+        finally:
+            self.blockSignals(False)
     
     def set_params_from_checkpoint(self, json_data: dict):
         """Заполняет поля настроек из JSON чекпоинта"""
@@ -288,6 +489,13 @@ class DiffusersSettingsPanel(QWidget):
             index = self.scheduler_combo.findText(scheduler)
             if index >= 0:
                 self.scheduler_combo.setCurrentIndex(index)
+        
+        # Timestep Spacing
+        timestep_spacing = json_data.get("timestep_spacing", "")
+        if timestep_spacing:
+            index = self.timestep_spacing_combo.findText(timestep_spacing)
+            if index >= 0:
+                self.timestep_spacing_combo.setCurrentIndex(index)
         
         # Steps
         steps = json_data.get("total_steps", 0)
@@ -330,6 +538,8 @@ class DiffusersSettingsPanel(QWidget):
         params = {
             "model": self.model_combo.currentText(),
             "scheduler": self.scheduler_combo.currentText(),
+            "timestep_spacing": self.timestep_spacing_combo.currentText(),
+            "use_karras_sigmas": self.use_karras_check.isChecked(),
             "steps": self.steps_spin.value(),
             "cfg": self.cfg_spin.value(),
             "width": width,

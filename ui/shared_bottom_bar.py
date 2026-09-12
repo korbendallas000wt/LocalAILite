@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QTextEdit,
                               QPushButton, QProgressBar, QLabel, QGroupBox, QApplication)
 from PyQt6.QtCore import pyqtSignal, Qt, QTimer
-from PyQt6.QtGui import QTextCursor, QPalette, QColor
+from PyQt6.QtGui import QTextCursor, QPalette, QColor, QFontMetrics
 
 
 class PlainTextEdit(QTextEdit):
@@ -57,11 +57,11 @@ class SharedBottomBar(QWidget):
         self.prompt_edit.textChanged.connect(self._on_text_changed)
         left_layout.addWidget(self.prompt_edit)
 
-        main_layout.addWidget(left_group, 3)
+        main_layout.addWidget(left_group, 1)
 
         # === ПРАВЫЙ БЛОК: режим + индикаторы + кнопка ===
-        right_group = QGroupBox()
-        right_layout = QVBoxLayout(right_group)
+        self.right_group = QGroupBox()
+        right_layout = QVBoxLayout(self.right_group)
         right_layout.setSpacing(5)
 
         # Строка 1: Индикатор режима
@@ -94,7 +94,7 @@ class SharedBottomBar(QWidget):
         self._action_state = "ready"  # ready, running, stopping
         right_layout.addWidget(self.action_btn)
 
-        main_layout.addWidget(right_group, 1)
+        main_layout.addWidget(self.right_group)
 
         # === Таймер ресурсов (обновление каждые 2 сек) ===
         self._resources_timer = QTimer()
@@ -102,6 +102,11 @@ class SharedBottomBar(QWidget):
         self._resources_timer.timeout.connect(self._update_resources)
         self._resources_timer.start()
         self._update_resources()
+
+    def set_right_width(self, width: int):
+        """Устанавливает ширину правой панели (вызывается из MainWindow)."""
+        self.right_group.setFixedWidth(width)
+        self._apply_mode_elide()
 
     # ─── Публичные методы ───
     def get_prompt(self):
@@ -149,25 +154,38 @@ class SharedBottomBar(QWidget):
         self.timer_label.setText(f"⏱ {mins:02d}:{secs:02d}")
 
     def set_mode(self, mode: str, model_name: str = ""):
-        """Устанавливает индикатор режима с именем модели."""
+        """Устанавливает индикатор режима с именем модели.
+        Убрано слово «Генерация» (иероглиф ㊘ уже показывает работу).
+        Длинные имена обрезаются элипсисом в середине, полный текст в тултипе.
+        """
         if mode == "free":
-            self.mode_label.setText("㊘ Ресурсы свободны")
+            self._mode_full_text = "㊘ Ресурсы свободны"
             self.mode_label.setStyleSheet("font-size: 12px; color: green; font-weight: bold;")
         elif mode == "ollama":
-            label = "㊘ Генерация Ollama"
+            self._mode_full_text = "㊘ Ollama"
             if model_name:
-                label += f" · {model_name}"
-            self.mode_label.setText(label)
+                self._mode_full_text += f" · {model_name}"
             self.mode_label.setStyleSheet("font-size: 12px; color: orange; font-weight: bold;")
         elif mode == "diffusers":
-            label = "㊘ Генерация Diffusers"
+            self._mode_full_text = "㊘ Diffusers"
             if model_name:
-                label += f" · {model_name}"
-            self.mode_label.setText(label)
+                self._mode_full_text += f" · {model_name}"
             self.mode_label.setStyleSheet("font-size: 12px; color: orange; font-weight: bold;")
         else:
-            self.mode_label.setText(str(mode))
+            self._mode_full_text = str(mode)
             self.mode_label.setStyleSheet("font-size: 12px; color: gray; font-weight: bold;")
+        self.mode_label.setToolTip(self._mode_full_text)
+        self._apply_mode_elide()
+
+    def _apply_mode_elide(self):
+        """Применяет элипсис к тексту индикатора на основе текущей ширины правой панели."""
+        if not hasattr(self, "_mode_full_text"):
+            return
+        # Ширина для элипсиса: ширина right_group минус отступы (запас 24px)
+        width = self.right_group.width() - 24 if self.right_group.width() > 24 else 200
+        fm = QFontMetrics(self.mode_label.font())
+        elided = fm.elidedText(self._mode_full_text, Qt.TextElideMode.ElideMiddle, width)
+        self.mode_label.setText(elided)
 
     def set_running_state(self, running):
         """Устанавливает состояние генерации"""

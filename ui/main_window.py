@@ -1,4 +1,5 @@
 from PyQt6.QtWidgets import QMainWindow, QTabWidget, QVBoxLayout, QWidget, QMenuBar, QMessageBox
+from PyQt6.QtCore import QEvent
 from PyQt6.QtGui import QAction
 from ui.tabs.ollama_tab import OllamaTab
 from ui.tabs.diffusers_tab import DiffusersTab
@@ -60,6 +61,10 @@ class MainWindow(QMainWindow):
         # Синхронизация радиокнопок с табами
         
         self.setCentralWidget(central_widget)
+        
+        # Жёсткая сетка 3:1: единый источник ширины правой панели
+        self.setMinimumWidth(800)
+        self._sync_panel_widths()
         
         if self.ollama_tab:
             self.resource_manager.register_module("ollama", self.ollama_tab)
@@ -424,6 +429,27 @@ class MainWindow(QMainWindow):
         if hasattr(active_tab, 'stop_generation'):
             active_tab.stop_generation()
     
+    # ─── Жёсткая сетка 3:1 ───
+    def _sync_panel_widths(self):
+        """Вычисляет ширину правой панели (1/4 окна) и раздаёт её всем правым панелям.
+        Вызывается при ресайзе окна и при инициализации.
+        """
+        right_width = max(220, self.width() // 4)
+        # Правая часть нижней панели
+        self.shared_bar.set_right_width(right_width)
+        # Правые панели табов
+        if self.ollama_tab:
+            self.ollama_tab.set_right_width(right_width)
+        if self.diffusers_tab:
+            self.diffusers_tab.set_right_width(right_width)
+        if self.image_prep_tab:
+            self.image_prep_tab.set_right_width(right_width)
+
+    def resizeEvent(self, event):
+        """При изменении размера окна пересчитываем ширину правых панелей."""
+        super().resizeEvent(event)
+        self._sync_panel_widths()
+
     def _restore_bar_state(self):
         """Заглушка: состояние табов НЕ восстанавливается из QSettings.
         Старт всегда с чистого листа (фикс: прогрессбар не показывает
