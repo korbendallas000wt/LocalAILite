@@ -137,7 +137,7 @@ class DiffusersSettingsPanel(QWidget):
         layout.addLayout(image_row)
         
         # === Кнопка очистки ===
-        self.clear_btn = QPushButton("Очистить настройки")
+        self.clear_btn = QPushButton("Сбросить к пресету")
         self.clear_btn.clicked.connect(self._clear_settings)
         layout.addWidget(self.clear_btn)
         
@@ -349,10 +349,81 @@ class DiffusersSettingsPanel(QWidget):
         self.seed_edit.setText(str(random.randint(0, 2**32 - 1)))
     
     def _clear_settings(self):
-        self.negative_prompt.clear()
-        self.seed_edit.setText("-1")
-        self.checkpoint_edit.clear()
-        self.init_image_edit.clear()
+        """Применяет пресет текущей выбранной модели.
+        
+        Загружает эффективный пресет через get_effective_preset() и устанавливает
+        значения во все поля пресета (планировщик, timestep_spacing, размер, сид,
+        шаги, cfg, strength, негативный промпт).
+        
+        НЕ трогает: checkpoint_edit, init_image_edit (не параметры пресета).
+        """
+        display_name = self.model_combo.currentText()
+        if not display_name:
+            return
+        
+        # Получаем ключ реестра (model_id) по display_name
+        from core.models_registry import get_model_id_by_display_name
+        model_id = get_model_id_by_display_name(self.config, display_name)
+        if not model_id:
+            return
+        
+        # Загружаем эффективный пресет
+        preset = get_effective_preset(self.config, model_id)
+        if not preset:
+            return
+        
+        # Блокируем сигналы при установке значений (защита от рекурсии)
+        self.blockSignals(True)
+        try:
+            # Планировщик
+            scheduler = preset.get("scheduler", "")
+            if scheduler:
+                idx = self.scheduler_combo.findText(scheduler)
+                if idx >= 0:
+                    self.scheduler_combo.setCurrentIndex(idx)
+            
+            # Timestep Spacing
+            timestep_spacing = preset.get("timestep_spacing", "")
+            if timestep_spacing:
+                idx = self.timestep_spacing_combo.findText(timestep_spacing)
+                if idx >= 0:
+                    self.timestep_spacing_combo.setCurrentIndex(idx)
+            
+            # Шаги
+            steps = preset.get("steps")
+            if steps is not None:
+                self.steps_spin.setValue(steps)
+            
+            # CFG
+            cfg = preset.get("cfg")
+            if cfg is not None:
+                self.cfg_spin.setValue(cfg)
+            
+            # Размер
+            width = preset.get("width")
+            height = preset.get("height")
+            if width and height:
+                size_text = f"{width}×{height}"
+                idx = self.size_combo.findText(size_text)
+                if idx >= 0:
+                    self.size_combo.setCurrentIndex(idx)
+            
+            # Сид
+            seed = preset.get("seed")
+            if seed is not None:
+                self.seed_edit.setText(str(seed))
+            
+            # Негативный промпт
+            negative_prompt = preset.get("negative_prompt")
+            if negative_prompt is not None:
+                self.negative_prompt.setPlainText(negative_prompt)
+            
+            # Strength
+            strength = preset.get("strength")
+            if strength is not None:
+                self.strength_spin.setValue(strength)
+        finally:
+            self.blockSignals(False)
     
     def set_params_from_checkpoint(self, json_data: dict):
         """Заполняет поля настроек из JSON чекпоинта"""

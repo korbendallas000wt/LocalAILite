@@ -83,7 +83,7 @@ class SettingsPanel(QWidget):
         layout.addLayout(chat_row)
         
         # === Кнопка сброса настроек ===
-        self.reset_settings_btn = QPushButton("Сбросить настройки")
+        self.reset_settings_btn = QPushButton("Сбросить к пресету")
         self.reset_settings_btn.clicked.connect(self._reset_settings)
         layout.addWidget(self.reset_settings_btn)
         
@@ -193,19 +193,62 @@ class SettingsPanel(QWidget):
             self.chat_selected.emit(folder_path)
 
     def _reset_settings(self):
-        """Сбрасывает только настройки генерации к дефолтным значениям"""
-        self.temp_spin.setValue(0.7)
-        self.top_p_spin.setValue(0.9)
-        self.max_tokens_spin.setValue(1024)
-        self.timeout_spin.setValue(600)
-        self.stream_check.setChecked(True)
-        self.sys_prompt.clear()
-        self.config.set("temperature", 0.7)
-        self.config.set("top_p", 0.9)
-        self.config.set("max_tokens", 1024)
-        self.config.set("timeout", 600)
-        self.config.set("stream", "true")
-        self.config.set("system_prompt", "")
+        """Применяет пресет текущей выбранной модели.
+        
+        Загружает эффективный пресет через get_effective_preset() и устанавливает
+        значения во все поля пресета (температура, топ-п, макс-токены, таймаут,
+        системный промпт). Сохраняет в конфиг.
+        
+        НЕ трогает: stream_check (не параметр пресета).
+        """
+        name_with_tag = self.model_combo.currentText()
+        if not name_with_tag:
+            return
+        
+        # Получаем ключ реестра (model_id) по имя:тег
+        model_id = get_model_id_by_ollama_name(self.config, name_with_tag)
+        if not model_id:
+            return
+        
+        # Загружаем эффективный пресет
+        preset = get_effective_preset(self.config, model_id)
+        if not preset:
+            return
+        
+        # Блокируем сигналы при установке значений (защита от рекурсии)
+        self.blockSignals(True)
+        try:
+            # Температура
+            temperature = preset.get("temperature")
+            if temperature is not None:
+                self.temp_spin.setValue(temperature)
+                self.config.set("temperature", temperature)
+            
+            # Топ-п
+            top_p = preset.get("top_p")
+            if top_p is not None:
+                self.top_p_spin.setValue(top_p)
+                self.config.set("top_p", top_p)
+            
+            # Макс-токены
+            max_tokens = preset.get("max_tokens")
+            if max_tokens is not None:
+                self.max_tokens_spin.setValue(max_tokens)
+                self.config.set("max_tokens", max_tokens)
+            
+            # Таймаут (опционально, -1 = не менять текущий)
+            timeout = preset.get("timeout", -1)
+            if timeout is not None and timeout > 0:
+                self.timeout_spin.setValue(timeout)
+                self.config.set("timeout", timeout)
+            
+            # Системный промпт (пустой = не менять текущий)
+            system_prompt = preset.get("system_prompt", "")
+            if system_prompt:
+                self.sys_prompt.setPlainText(system_prompt)
+                self.config.set("system_prompt", system_prompt)
+        finally:
+            self.blockSignals(False)
 
     def _update_ui_state(self, mode: str, locked: bool):
         """
