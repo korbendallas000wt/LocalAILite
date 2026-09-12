@@ -19,7 +19,8 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
                              QLineEdit, QTextEdit, QPushButton, QGroupBox, QCheckBox)
 from PyQt6.QtCore import Qt
 from core.model_presets import get_effective_preset, save_preset, get_builtin_default
-from core.models_registry import get_model_page_url
+from core.models_registry import get_model_page_url, get_model_entry
+from ui.dialogs.preset_cheatsheet_dialog import PresetCheatsheetDialog
 
 
 class PresetEditDialog(QDialog):
@@ -31,7 +32,10 @@ class PresetEditDialog(QDialog):
         self.model_id = model_id
         self.model_type = model_type
 
-        self.setWindowTitle("Настройка пресета модели")
+        # Заголовок с именем модели (чтобы пользователь не забыл, какую модель редактирует)
+        model_entry = get_model_entry(config, model_id)
+        display_name = model_entry.get("display_name", model_id) if model_entry else model_id
+        self.setWindowTitle(f"Настройка пресета: {display_name}")
         self.setMinimumWidth(480)
 
         layout = QVBoxLayout(self)
@@ -53,6 +57,18 @@ class PresetEditDialog(QDialog):
             no_link = QLabel("Страница модели недоступна (нестандартный источник).")
             no_link.setStyleSheet("color: gray; font-size: 11px;")
             layout.addWidget(no_link)
+
+        # === Кнопка шпаргалки (только для Диффузерс) ===
+        # Для Олламы шпаргалка пока не готова (параметры чата не в словаре),
+        # чтобы не путать пользователя. Добавим в будущем.
+        if self.model_type == "diffusers":
+            cheatsheet_row = QHBoxLayout()
+            self.cheatsheet_btn = QPushButton("? Шпаргалка по параметрам")
+            self.cheatsheet_btn.setToolTip("Открыть справочник: что такое параметры, на что влияют, рекомендации")
+            self.cheatsheet_btn.clicked.connect(self._on_cheatsheet_clicked)
+            cheatsheet_row.addWidget(self.cheatsheet_btn)
+            cheatsheet_row.addStretch()
+            layout.addLayout(cheatsheet_row)
 
         layout.addSpacing(8)
 
@@ -88,6 +104,17 @@ class PresetEditDialog(QDialog):
         btn_layout.addWidget(self.save_btn)
 
         layout.addLayout(btn_layout)
+
+    # ─── Обработчики шпаргалки ───
+
+    def _on_cheatsheet_clicked(self):
+        """Открывает диалог справки по пресетам и генерации.
+
+        Справочный материал (не интерактивный): пользователь читает
+        объяснения параметров и сам вводит значения в поля диалога.
+        """
+        dialog = PresetCheatsheetDialog(self)
+        dialog.exec()
 
     # ─── Поля Диффузерс ───
 
