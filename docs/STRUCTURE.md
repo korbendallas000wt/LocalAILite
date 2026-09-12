@@ -49,7 +49,7 @@
     │   │   └── preset_cheatsheet.json   # Образовательный справочник по пресетам (соответствия семплеров, словарь параметров)
     │   ├── resource_manager.py              # Управление ресурсом: acquire/release, 2 арендатора
     │   ├── resource_monitor.py              # Мониторинг RAM/CPU, реальная проверка RAM, лимиты, PID
-    │   └── updater.py                     # Модуль обновлений v2.3: проверка версий через GitHub API (IPv4, обход блокировки raw.githubusercontent.com) + скачивание/установка (QThread). Явный таймаут 10с, base64-декодирование ответов API
+    │   └── updater.py                     # Модуль обновлений v2.3: проверка версий через GitHub API (IPv4, обход блокировки raw.githubusercontent.com) + скачивание/установка (QThread). Явный таймаут 30с, base64-декодирование ответов API
     │
     ├── scripts/                             # CLI-скрипты (запускаются в venv)
     │   ├── generate_diffusers.py            # Генерация SDXL: callback_on_step_end, чекпоинты, точный resume, timestep_spacing, сигмы Карраса
@@ -184,7 +184,7 @@
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/resource_manager.py
 - **resource_monitor.py** — мониторинг RAM/CPU, лимиты, PID
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/resource_monitor.py
-- **updater.py** — модуль обновлений v2.1: проверка версий (асинхронно, QNetworkAccessManager) + скачивание/установка (QThread)
+- **updater.py** — модуль обновлений v2.3: проверка версий через GitHub API (обход блокировки raw.githubusercontent.com) + скачивание/установка (QThread), явный таймаут 30с, base64-декодирование ответов API
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/updater.py
 - **model_verifier.py** — асинхронная хэш-проверка моделей в фоне (DeepValidationWorker)
   https://github.com/korbendallas000wt/LocalAILite/raw/refs/heads/dev/core/model_verifier.py
