@@ -217,7 +217,7 @@ class PresetEditDialog(QDialog):
         row += 1
 
         # Таймаут (опционально)
-        grid.addWidget(QLabel("Таймаут (-1 = глобальный):"), row, 0)
+        grid.addWidget(QLabel("Таймаут (-1 = не менять):"), row, 0)
         self.timeout_spin = QSpinBox()
         self.timeout_spin.setRange(-1, 3600)
         self.timeout_spin.setSingleStep(30)
@@ -226,6 +226,20 @@ class PresetEditDialog(QDialog):
         row += 1
 
         layout.addWidget(group)
+
+        # Системный промпт (отдельный блок)
+        sys_group = QGroupBox("Системный промпт")
+        sys_layout = QVBoxLayout(sys_group)
+        sys_hint = QLabel("Оставьте пустым, чтобы не менять текущий системный промпт при выборе модели.")
+        sys_hint.setStyleSheet("color: gray; font-size: 11px;")
+        sys_hint.setWordWrap(True)
+        sys_layout.addWidget(sys_hint)
+        self.system_prompt_edit = QTextEdit()
+        self.system_prompt_edit.setPlaceholderText("Системный промпт для этой модели (пусто = не менять текущий)")
+        self.system_prompt_edit.setPlainText(preset.get("system_prompt", ""))
+        self.system_prompt_edit.setFixedHeight(80)
+        sys_layout.addWidget(self.system_prompt_edit)
+        layout.addWidget(sys_group)
 
     # ─── Обработчики ───
 
@@ -269,6 +283,7 @@ class PresetEditDialog(QDialog):
         self.top_p_spin.setValue(preset.get("top_p", 0.9))
         self.max_tokens_spin.setValue(preset.get("max_tokens", 2048))
         self.timeout_spin.setValue(preset.get("timeout", -1))
+        self.system_prompt_edit.setPlainText(preset.get("system_prompt", ""))
 
     def _on_save_clicked(self):
         """Собирает значения полей и сохраняет пресет в реестр."""
@@ -294,6 +309,7 @@ class PresetEditDialog(QDialog):
                 "top_p": self.top_p_spin.value(),
                 "max_tokens": self.max_tokens_spin.value(),
                 "timeout": self.timeout_spin.value(),
+                "system_prompt": self.system_prompt_edit.toPlainText(),
             }
 
         if preset:

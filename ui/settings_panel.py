@@ -160,10 +160,17 @@ class SettingsPanel(QWidget):
             if max_tokens is not None:
                 self.max_tokens_spin.setValue(max_tokens)
             
-            # Таймаут (опционально, -1 = глобальный)
+            # Таймаут (опционально, -1 = не менять текущий)
             timeout = preset.get("timeout", -1)
             if timeout is not None and timeout > 0:
                 self.timeout_spin.setValue(timeout)
+            
+            # Системный промпт (пустой = не менять текущий)
+            # Работа без системного промпта — нонсенс, пустой пресет явно
+            # означает "не трогать текущий промпт"
+            system_prompt = preset.get("system_prompt", "")
+            if system_prompt:
+                self.sys_prompt.setPlainText(system_prompt)
         finally:
             self.blockSignals(False)
 
