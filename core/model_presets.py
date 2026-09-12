@@ -24,6 +24,7 @@
 DEFAULT_PRESET_DIFFUSERS = {
     "scheduler": "EulerDiscreteScheduler",
     "timestep_spacing": "leading",
+    "use_karras_sigmas": False,  # Karras сигмы (только для DPMSolverMultistepScheduler)
     "steps": 30,
     "cfg": 7.5,
     "width": 1024,

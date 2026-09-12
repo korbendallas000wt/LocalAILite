@@ -16,7 +16,7 @@
 """
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
                              QLabel, QComboBox, QSpinBox, QDoubleSpinBox,
-                             QLineEdit, QTextEdit, QPushButton, QGroupBox)
+                             QLineEdit, QTextEdit, QPushButton, QGroupBox, QCheckBox)
 from PyQt6.QtCore import Qt
 from core.model_presets import get_effective_preset, save_preset, get_builtin_default
 from core.models_registry import get_model_page_url
@@ -110,6 +110,7 @@ class PresetEditDialog(QDialog):
             "PNDMScheduler"
         ])
         self.scheduler_combo.setCurrentText(preset.get("scheduler", "EulerDiscreteScheduler"))
+        self.scheduler_combo.currentTextChanged.connect(self._on_scheduler_changed)
         grid.addWidget(self.scheduler_combo, row, 1)
         row += 1
 
@@ -120,6 +121,20 @@ class PresetEditDialog(QDialog):
         self.timestep_spacing_combo.setCurrentText(preset.get("timestep_spacing", "leading"))
         grid.addWidget(self.timestep_spacing_combo, row, 1)
         row += 1
+
+        # Karras sigmas
+        self.use_karras_check = QCheckBox("Использовать сигмы Карраса (Karras)")
+        self.use_karras_check.setToolTip(
+            "Сигмы Карраса дают лучшее качество при малом числе шагов. "
+            "Поддерживаются только планировщиком DPMSolverMultistepScheduler. "
+            "Аналог 'DPM++ 2M Karras' из A1111/Forge."
+        )
+        self.use_karras_check.setChecked(preset.get("use_karras_sigmas", False))
+        grid.addWidget(self.use_karras_check, row, 0, 1, 2)
+        row += 1
+        
+        # Начальная активация чекбокса в зависимости от планировщика
+        self._on_scheduler_changed(self.scheduler_combo.currentText())
 
         # Размер
         grid.addWidget(QLabel("Размер:"), row, 0)
@@ -178,6 +193,19 @@ class PresetEditDialog(QDialog):
         self.negative_prompt_edit.setFixedHeight(60)
         neg_layout.addWidget(self.negative_prompt_edit)
         layout.addWidget(neg_group)
+
+    def _on_scheduler_changed(self, scheduler_name: str):
+        """Активирует/деактивирует чекбокс Karras в зависимости от планировщика.
+        
+        Консистентно с панелью настроек: чекбокс активен только для
+        DPMSolverMultistepScheduler. Для остальных планировщиков деактивируется.
+        """
+        if self.model_type != "diffusers":
+            return
+        supports_karras = (scheduler_name == "DPMSolverMultistepScheduler")
+        self.use_karras_check.setEnabled(supports_karras)
+        if not supports_karras:
+            self.use_karras_check.setChecked(False)
 
     # ─── Поля Олламы ───
 
@@ -264,6 +292,8 @@ class PresetEditDialog(QDialog):
         if idx >= 0:
             self.timestep_spacing_combo.setCurrentIndex(idx)
 
+        self.use_karras_check.setChecked(preset.get("use_karras_sigmas", False))
+
         width = preset.get("width", 1024)
         height = preset.get("height", 1024)
         size_text = f"{width}×{height}"
@@ -295,6 +325,7 @@ class PresetEditDialog(QDialog):
             preset = {
                 "scheduler": self.scheduler_combo.currentText(),
                 "timestep_spacing": self.timestep_spacing_combo.currentText(),
+                "use_karras_sigmas": self.use_karras_check.isChecked(),
                 "width": width,
                 "height": height,
                 "seed": int(self.seed_edit.text()) if self.seed_edit.text().lstrip("-").isdigit() else -1,

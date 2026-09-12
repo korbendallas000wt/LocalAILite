@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QComboBox,
 QSpinBox, QDoubleSpinBox, QLineEdit, QPushButton,
-QTextEdit, QHBoxLayout, QLabel, QRadioButton)
+QTextEdit, QHBoxLayout, QLabel, QRadioButton, QCheckBox)
 from PyQt6.QtCore import Qt, pyqtSignal
 import random
 import os
@@ -47,7 +47,17 @@ class DiffusersSettingsPanel(QWidget):
             "PNDMScheduler"
         ])
         self.scheduler_combo.setCurrentText(self.config.get_sdxl_scheduler())
+        self.scheduler_combo.currentTextChanged.connect(self._on_scheduler_changed)
         layout.addWidget(self.scheduler_combo)
+        
+        # === Karras sigmas (только для DPMSolverMultistepScheduler) ===
+        self.use_karras_check = QCheckBox("Использовать сигмы Карраса (Karras)")
+        self.use_karras_check.setChecked(self.config.get("sdxl/use_karras_sigmas", "false") == "true")
+        self.use_karras_check.toggled.connect(
+            lambda checked: self.config.set("sdxl/use_karras_sigmas", "true" if checked else "false"))
+        layout.addWidget(self.use_karras_check)
+        # Начальная активация чекбокса в зависимости от планировщика
+        self._on_scheduler_changed(self.scheduler_combo.currentText())
         
         # === Timestep Spacing (распределение шагов по шкале времени) ===
         layout.addWidget(QLabel("Timestep Spacing:"))
@@ -261,6 +271,17 @@ class DiffusersSettingsPanel(QWidget):
             if current_text and current_text in display_names:
                 self.model_combo.setCurrentText(current_text)
     
+    def _on_scheduler_changed(self, scheduler_name: str):
+        """Активирует/деактивирует чекбокс Karras в зависимости от планировщика.
+        
+        Karras сигмы поддерживаются только планировщиком DPMSolverMultistepScheduler.
+        Для остальных чекбокс деактивируется (значение игнорируется скриптом).
+        """
+        supports_karras = (scheduler_name == "DPMSolverMultistepScheduler")
+        self.use_karras_check.setEnabled(supports_karras)
+        if not supports_karras:
+            self.use_karras_check.setChecked(False)
+
     def _on_model_changed(self, display_name: str):
         """Применяет пресет модели при смене выбора в комбобоксе.
         
@@ -308,6 +329,11 @@ class DiffusersSettingsPanel(QWidget):
                 idx = self.timestep_spacing_combo.findText(timestep_spacing)
                 if idx >= 0:
                     self.timestep_spacing_combo.setCurrentIndex(idx)
+            
+            # Karras sigmas (применяется только если планировщик поддерживает)
+            use_karras = preset.get("use_karras_sigmas", False)
+            if self.use_karras_check.isEnabled():
+                self.use_karras_check.setChecked(use_karras)
             
             # Шаги
             steps = preset.get("steps")
@@ -388,6 +414,11 @@ class DiffusersSettingsPanel(QWidget):
                 idx = self.timestep_spacing_combo.findText(timestep_spacing)
                 if idx >= 0:
                     self.timestep_spacing_combo.setCurrentIndex(idx)
+            
+            # Karras sigmas (применяется только если планировщик поддерживает)
+            use_karras = preset.get("use_karras_sigmas", False)
+            if self.use_karras_check.isEnabled():
+                self.use_karras_check.setChecked(use_karras)
             
             # Шаги
             steps = preset.get("steps")
@@ -508,6 +539,7 @@ class DiffusersSettingsPanel(QWidget):
             "model": self.model_combo.currentText(),
             "scheduler": self.scheduler_combo.currentText(),
             "timestep_spacing": self.timestep_spacing_combo.currentText(),
+            "use_karras_sigmas": self.use_karras_check.isChecked(),
             "steps": self.steps_spin.value(),
             "cfg": self.cfg_spin.value(),
             "width": width,

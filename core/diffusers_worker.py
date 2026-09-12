@@ -113,6 +113,10 @@ class DiffusersWorker(QObject):
             "--history-dir", self._history_dir,
             "--cache_dir", models_path
         ]
+        
+        # Karras сигмы — только если включены в параметрах (по умолчанию выключены)
+        if params.get("use_karras_sigmas", False):
+            args.append("--use-karras-sigmas")
         if self.config.get("sdxl/no_safety_checker", "false") == "true":
             args.append("--no-safety-checker")
         if resume:

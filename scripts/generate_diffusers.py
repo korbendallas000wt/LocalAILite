@@ -21,7 +21,20 @@ from core import checkpoint_manager
 from core import history_manager
 
 
-def get_scheduler(name, config):
+def get_scheduler(name, config, use_karras_sigmas=False):
+    """Создаёт планировщик из конфига конвейера.
+    
+    Args:
+        name: имя планировщика (короткое или полное имя класса)
+        config: конфиг планировщика из конвейера
+        use_karras_sigmas: использовать сигмы Карраса (только для
+            DPMSolverMultistepScheduler; для остальных игнорируется)
+    
+    Karras сигмы (из A1111/Forge "DPM++ 2M Karras") дают лучшее качество
+    при малом числе шагов. Поддерживаются только многшаговыми планировщиками
+    семейства DPM; для Euler/DDIM/PNDM параметр не поддерживается, поэтому
+    передаём его только для поддерживающих классов (защита от ошибки).
+    """
     # Маппинг коротких имен и полных имен классов
     scheduler_map = {
         "Euler": EulerDiscreteScheduler,
@@ -37,6 +50,10 @@ def get_scheduler(name, config):
     }
     
     scheduler_class = scheduler_map.get(name, EulerDiscreteScheduler)
+    
+    # Karras сигмы поддерживаются только многшаговыми планировщиками семейства DPM
+    if use_karras_sigmas and scheduler_class is DPMSolverMultistepScheduler:
+        return scheduler_class.from_config(config, use_karras_sigmas=True)
     return scheduler_class.from_config(config)
 
 
@@ -53,6 +70,8 @@ def main():
     parser.add_argument("--scheduler", default="Euler")
     parser.add_argument("--timestep_spacing", default="leading",
                         help="Распределение шагов по шкале времени: leading / linspace / trailing")
+    parser.add_argument("--use-karras-sigmas", action="store_true",
+                        help="Использовать сигмы Карраса (только для DPMSolverMultistepScheduler)")
     parser.add_argument("--device", default="cpu")
     
     # Аргументы от DiffusersWorker
@@ -136,7 +155,7 @@ def main():
 
 
     # Настройка scheduler
-    pipe.scheduler = get_scheduler(args.scheduler, pipe.scheduler.config)
+    pipe.scheduler = get_scheduler(args.scheduler, pipe.scheduler.config, args.use_karras_sigmas)
 
     # Seed
     generator = torch.Generator(device=args.device)
@@ -201,6 +220,7 @@ def main():
             "model": os.path.basename(args.model),
             "scheduler": args.scheduler,
             "timestep_spacing": args.timestep_spacing,
+            "use_karras_sigmas": args.use_karras_sigmas,
             "steps": args.steps,
             "cfg": args.cfg,
             "size": f"{args.width}x{args.height}",
