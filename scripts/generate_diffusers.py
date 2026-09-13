@@ -263,6 +263,16 @@ def main():
         # умножение скомпенсировалось.
         # Нюанс: init_noise_sigma берём для УКОРОЧЕННОГО расписания (resume_timesteps),
         # поэтому сначала настраиваем scheduler на эти timesteps.
+        #
+        # ВАЖНО: Karras sigmas несовместимы с передачей явных timesteps (ValueError в diffusers:
+        # "Cannot use `timesteps` with `config.use_karras_sigmas = True`").
+        # Временно отключаем их для точного resume — timesteps из чекпоинта уже содержат
+        # правильный шум (сгенерированы с Karras на момент сохранения), поэтому для самого
+        # процесса возобновления Karras не нужен.
+        if getattr(pipe.scheduler.config, "use_karras_sigmas", False):
+            pipe.scheduler.config.use_karras_sigmas = False
+            print("[INFO] Karras sigmas temporarily disabled for precise resume (timesteps already contain correct noise)", flush=True)
+        
         pipe.scheduler.set_timesteps(timesteps=resume_timesteps)
         init_sigma = pipe.scheduler.init_noise_sigma
         latents = latents / init_sigma

@@ -497,6 +497,15 @@ class DiffusersSettingsPanel(QWidget):
             if index >= 0:
                 self.timestep_spacing_combo.setCurrentIndex(index)
         
+        # Karras sigmas (из чекпоинта)
+        # Чекбокс активен только для DPMSolverMultistepScheduler (планировщик
+        # устанавливается в блоке выше, _on_scheduler_changed уже активировал/
+        # деактивировал чекбокс). Для старых чекпоинтов (до Этапа 5.4) поле
+        # может отсутствовать — дефолт False.
+        use_karras = json_data.get("use_karras_sigmas", False)
+        if self.use_karras_check.isEnabled():
+            self.use_karras_check.setChecked(use_karras)
+        
         # Steps
         steps = json_data.get("total_steps", 0)
         if steps > 0:

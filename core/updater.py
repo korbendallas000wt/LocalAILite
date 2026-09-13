@@ -1,5 +1,5 @@
 """
-core/updater.py — модуль обновлений (v2.3, QNetworkAccessManager + GitHub API).
+core/updater.py — модуль обновлений (v2.4, QNetworkAccessManager + GitHub API).
 
 Проверка версий + скачивание + установка.
 Контракт:
@@ -206,7 +206,7 @@ class UpdateWorker(QThread):
 
 
 class Updater(QObject):
-    """Модуль обновлений (v2.3, асинхронный через QNetworkAccessManager + GitHub API)."""
+    """Модуль обновлений (v2.4, асинхронный через QNetworkAccessManager + GitHub API)."""
     update_available = pyqtSignal(str, str)
     update_not_found = pyqtSignal(str)
     check_failed = pyqtSignal(str, str)  # (error, current_version)
@@ -220,7 +220,7 @@ class Updater(QObject):
         self._network_manager.finished.connect(self._on_network_reply)
         self._update_worker = None
         self._remote_version = None
-        # v2.2/v2.3: ключ — сам объект reply (сильная ссылка). Раньше был id(reply):
+        # v2.2/v2.4: ключ — сам объект reply (сильная ссылка). Раньше был id(reply):
         # GC мог собрать Python-обёртку до сигнала finished, ответ терялся
         # (баг на PyQt 6.6 / Ubuntu — вкладка «Обновления» висела на «Проверка...»).
         self._pending_requests = {}  # reply -> (request_type, local_version)
@@ -350,7 +350,7 @@ class Updater(QObject):
 
     def _parse_changelog(self, changelog_text: str) -> str:
         """Извлекает последний блок из CHANGELOG.md."""
-        pattern = r'## \[[\d.]+\] — \d{4}-\d{2}-\d{2}.*?(?=## \[|\Z)'
+        pattern = r'## \[[\d.]+\] [-—] \d{4}-\d{2}-\d{2}.*?(?=## \[|\Z)'
         matches = re.findall(pattern, changelog_text, re.DOTALL)
         if matches:
             return matches[0].strip()

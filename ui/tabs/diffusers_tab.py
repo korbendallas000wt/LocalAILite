@@ -111,6 +111,11 @@ class DiffusersTab(QWidget):
             "negative_prompt": step_meta.get("negative_prompt", ""),
             "model": step_meta.get("model", ""),
             "scheduler": step_meta.get("scheduler", ""),
+            # timestep_spacing и use_karras_sigmas записываются в метаданные
+            # чекпоинта (Этапы 5.1 и 5.4) и должны подхватываться при загрузке.
+            # Для старых чекпоинтов (до этих этапов) дефолты: ""/"".
+            "timestep_spacing": step_meta.get("timestep_spacing", ""),
+            "use_karras_sigmas": step_meta.get("use_karras_sigmas", False),
             "total_steps": step_meta.get("steps", 0),
             "cfg": step_meta.get("cfg", 0),
             "seed": step_meta.get("seed", -1),
