@@ -574,6 +574,30 @@ README.md не попал в релиз v1.8.0 из-за старого искл
 Архитектура не тронута: `QNetworkAccessManager` + сильный ключ `reply` в `_pending_requests` (из сессии 8).
 Коммит: `6924537`.
 
+## Хотфикс — Каррас-сигмы и точный resume из чекпоинта (2026-09-14):
+
+### Проблема 1: точный resume с Каррас-сигмами
+Чекпоинты, созданные с включёнными Каррас-сигмами, не возобновлялись:
+`ValueError: Cannot use timesteps with config.use_karras_sigmas = True`
+Diffusers запрещает передавать явные timesteps при включённых Каррас-сигмах.
+
+**Решение** (`scripts/generate_diffusers.py`): перед вызовом `set_timesteps(timesteps=resume_timesteps)` временно отключаем Каррас-сигмы в конфиге планировщика. Timesteps из чекпоинта уже содержат правильный шум.
+
+### Проблема 2: подхват Каррас и timestep_spacing из чекпоинта
+При загрузке чекпоинта в режиме «Изменить» не подхватывались `use_karras_sigmas` и `timestep_spacing`.
+
+**Корень**: словарь `normalized` в `diffusers_tab.py` не содержал этих полей.
+
+**Решение** (полная цепочка):
+1. Скрипт пишет оба поля в метаданные чекпоинта
+2. Таб читает их из метаданных в `normalized` (новый патч)
+3. Панель устанавливает чекбокс/комбобокс из `normalized`
+
+### Файлы:
+- `scripts/generate_diffusers.py` — временное отключение Каррас для точного resume
+- `ui/tabs/diffusers_tab.py` — передача timestep_spacing и use_karras_sigmas в normalized
+- `ui/tabs/diffusers_settings_panel.py` — подхват use_karras_sigmas из чекпоинта
+
 ## Backlog (отложено)
 
 - Подсветка прогрессбара токенов (зелёный/оранжевый/красный) — вернём с системными цветами
